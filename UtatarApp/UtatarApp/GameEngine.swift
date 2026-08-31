@@ -39,7 +39,7 @@ struct HomeUnit: Identifiable, Equatable {
 struct TrainableUnit: Identifiable, Equatable {
     let id: String     // اسم الـ input الحقيقي في الفورم (t1..t10)
     var name: String
-    var max: Int       // الحد الأقصى القابل للتدريب دلوقتي (من اللعبة نفسها)
+    var max = 0        // الحد الأقصى القابل للتدريب دلوقتي (من اللعبة نفسها)
     var costWood = 0
     var costClay = 0
     var costIron = 0
@@ -361,7 +361,7 @@ final class GameEngine: NSObject {
     }
 
     static func trainManyJS(_ pairs: [(String, Int)]) -> String {
-        let arr = "["
+        var arr = "["
         for (i, p) in pairs.enumerated() {
             let name = p.0.replacingOccurrences(of: "'", with: "")
             arr += "['\(name)',\(p.1)]"
@@ -537,7 +537,7 @@ final class GameEngine: NSObject {
     }
 
     static func attackJS(x: Int, y: Int, troops: [(String, Int)], raid: Bool) -> String {
-        let arr = "["
+        var arr = "["
         for (i, t) in troops.enumerated() {
             let name = t.0.replacingOccurrences(of: "'", with: "")
             arr += "['\(name)',\(t.1)]"
