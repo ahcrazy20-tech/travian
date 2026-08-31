@@ -123,6 +123,20 @@
 
 ## 📲 ملف الـ IPA وتركيبه بـ TrolStore
 
+### ⛑️ لو عندك الـ zip القديم دلوقتي وعايز الـ IPA حالاً
+ملفات الـ `UtatarApp.xcarchive` اللي جوّه الـ zip فيها الـ `.app` الجاهز — وحدها الـ IPA
+(الـ IPA = `Payload/UtatarApp.app` مضغوط zip). على كمبيوتر:
+
+```bash
+unzip UtatarApp-IPA.zip -d utatar
+APP=$(find utatar -name "UtatarApp.app" -maxdepth 6 | head -1)
+mkdir -p Payload && cp -R "$APP" Payload/
+zip -qry UtatarApp.ipa Payload && rm -rf Payload
+# → UtatarApp.ipa جاهز للتركيب بـ TrollStore / TrolStore
+```
+> ملاحظة: البناء القديم ده اتعمل قبل ما نزّل الـ target لـ iOS 15 — فبرضه محتاج iOS 16.4+.
+> بعد ما تحدّث الـ workflow من `ci/build.yml` مفيش حاجة من دي محتاجا: الـ IPA بينزل لوحده في Releases.
+
 ### 🚨 ليه اللي نزل كان zip؟
 كل **Artifacts** في GitHub Actions بتنزل كملف `.zip` (دي سياسة GitHub، مش مشكلة في
 البناء). ملف الـ IPA الحقيقي جوه الـ zip.
