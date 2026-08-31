@@ -429,20 +429,173 @@ struct FarmingSettingsView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("⚙️ إعدادات التجسس")) {
-                    Toggle("تجسس تلقائي", isOn: $bot.farmingSettings.autoScoutEnabled)
-                    Toggle("تجاهل اللاعبين النشطين", isOn: $bot.farmingSettings.avoidActivePlayers)
-                    Toggle("تجاهل الجدران العالية", isOn: $bot.farmingSettings.avoidHighWall)
-                    
-                    HStack {
-                        Text("أقصى مستوى جدار")
-                        Spacer()
-                        Picker("", selection: $bot.farmingSettings.maxWallLevel) {
-                            ForEach(0..<21) { level in
-                                Text("\(level)").tag(level)
+                // MARK: - Resource Filters Section
+                Section(header: Text("💰 فلاتر الموارد (ابحث عن)").foregroundColor(.yellow)) {
+                    Toggle("🪵 ابحث عن خشب", isOn: $bot.farmingSettings.searchForWood)
+                    if bot.farmingSettings.searchForWood {
+                        HStack {
+                            Text("أقل خشب")
+                            Spacer()
+                            Picker("", selection: $bot.farmingSettings.minWoodToAttack) {
+                                Text("100").tag(100)
+                                Text("200").tag(200)
+                                Text("500").tag(500)
+                                Text("1000").tag(1000)
+                                Text("2000").tag(2000)
                             }
                         }
                     }
+                    
+                    Toggle("🧱 ابحث عن طين", isOn: $bot.farmingSettings.searchForClay)
+                    if bot.farmingSettings.searchForClay {
+                        HStack {
+                            Text("أقل طين")
+                            Spacer()
+                            Picker("", selection: $bot.farmingSettings.minClayToAttack) {
+                                Text("100").tag(100)
+                                Text("200").tag(200)
+                                Text("500").tag(500)
+                                Text("1000").tag(1000)
+                                Text("2000").tag(2000)
+                            }
+                        }
+                    }
+                    
+                    Toggle("⚙️ ابحث عن حديد", isOn: $bot.farmingSettings.searchForIron)
+                    if bot.farmingSettings.searchForIron {
+                        HStack {
+                            Text("أقل حديد")
+                            Spacer()
+                            Picker("", selection: $bot.farmingSettings.minIronToAttack) {
+                                Text("100").tag(100)
+                                Text("200").tag(200)
+                                Text("500").tag(500)
+                                Text("1000").tag(1000)
+                                Text("2000").tag(2000)
+                            }
+                        }
+                    }
+                    
+                    Toggle("🌾 ابحث عن قمح", isOn: $bot.farmingSettings.searchForWheat)
+                    if bot.farmingSettings.searchForWheat {
+                        HStack {
+                            Text("أقل قمح")
+                            Spacer()
+                            Picker("", selection: $bot.farmingSettings.minWheatToAttack) {
+                                Text("50").tag(50)
+                                Text("100").tag(100)
+                                Text("200").tag(200)
+                                Text("500").tag(500)
+                                Text("1000").tag(1000)
+                            }
+                        }
+                    }
+                    
+                    HStack {
+                        Text("أقل مجموع موارد")
+                        Spacer()
+                        Picker("", selection: $bot.farmingSettings.minTotalResources) {
+                            Text("200").tag(200)
+                            Text("500").tag(500)
+                            Text("1000").tag(1000)
+                            Text("2000").tag(2000)
+                            Text("5000").tag(5000)
+                        }
+                    }
+                }
+                
+                // MARK: - Troop Settings Section
+                Section(header: Text("⚔️ إعدادات الجنود").foregroundColor(.red)) {
+                    Toggle("استخدم نسبة من الجنود", isOn: $bot.farmingSettings.usePercentageOfTroops)
+                    
+                    if bot.farmingSettings.usePercentageOfTroops {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("نسبة الجنود: \(bot.farmingSettings.troopPercentage)%")
+                                .font(.subheadline)
+                            Slider(value: Binding(
+                                get: { Double(bot.farmingSettings.troopPercentage) },
+                                set: { bot.farmingSettings.troopPercentage = Int($0) }
+                            ), in: 10...90, step: 5)
+                            .tint(.red)
+                            
+                            Text("هيبعت \(bot.farmingSettings.troopPercentage)% من جنودك")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    } else {
+                        HStack {
+                            Text("عدد جنود ثابت")
+                            Spacer()
+                            Stepper("\(bot.farmingSettings.fixedTroopCount)", value: $bot.farmingSettings.fixedTroopCount, in: 1...200)
+                        }
+                    }
+                    
+                    HStack {
+                        Text("احتفظ بجنود في القرية")
+                        Spacer()
+                        Stepper("\(bot.farmingSettings.keepTroopsInVillage)", value: $bot.farmingSettings.keepTroopsInVillage, in: 0...50)
+                    }
+                    
+                    HStack {
+                        Text("أقل جنود للهجوم")
+                        Spacer()
+                        Stepper("\(bot.farmingSettings.minTroopsToSend)", value: $bot.farmingSettings.minTroopsToSend, in: 1...50)
+                    }
+                    
+                    HStack {
+                        Text("أقصى جنود للهجوم")
+                        Spacer()
+                        Stepper("\(bot.farmingSettings.maxTroopsToSend)", value: $bot.farmingSettings.maxTroopsToSend, in: 10...500)
+                    }
+                    
+                    Toggle("أرسل جواسيس أولاً", isOn: $bot.farmingSettings.preferScouts)
+                    if bot.farmingSettings.preferScouts {
+                        HStack {
+                            Text("عدد الجواسيس")
+                            Spacer()
+                            Stepper("\(bot.farmingSettings.scoutCount)", value: $bot.farmingSettings.scoutCount, in: 1...10)
+                        }
+                    }
+                }
+                
+                // MARK: - Auto Retreat Section
+                Section(header: Text("🏃 الهروب التلقائي").foregroundColor(.orange)) {
+                    Toggle("هروب لما يهاجموني", isOn: $bot.farmingSettings.autoRetreatOnAttack)
+                    
+                    if bot.farmingSettings.autoRetreatOnAttack {
+                        Toggle("هروب لواحة", isOn: $bot.farmingSettings.retreatToOasis)
+                        
+                        if !bot.farmingSettings.retreatToOasis {
+                            HStack {
+                                Text("إحداثي X للهروب")
+                                Spacer()
+                                TextField("X", value: $bot.farmingSettings.retreatTargetX, format: .number)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 80)
+                            }
+                            HStack {
+                                Text("إحداثي Y للهروب")
+                                Spacer()
+                                TextField("Y", value: $bot.farmingSettings.retreatTargetY, format: .number)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 80)
+                            }
+                        }
+                        
+                        Toggle("احتفظ بمدافعين", isOn: $bot.farmingSettings.keepDefenders)
+                        if bot.farmingSettings.keepDefenders {
+                            HStack {
+                                Text("عدد المدافعين")
+                                Spacer()
+                                Stepper("\(bot.farmingSettings.defenderCount)", value: $bot.farmingSettings.defenderCount, in: 1...20)
+                            }
+                        }
+                    }
+                }
+                
+                // MARK: - Scout Settings Section
+                Section(header: Text("🔍 إعدادات التجسس").foregroundColor(.blue)) {
+                    Toggle("تجسس تلقائي", isOn: $bot.farmingSettings.autoScoutEnabled)
                     
                     HStack {
                         Text("فترة التجسس")
@@ -456,24 +609,6 @@ struct FarmingSettingsView: View {
                             Text("5 دقائق").tag(5)
                             Text("10 دقائق").tag(10)
                             Text("30 دقيقة").tag(30)
-                        }
-                    }
-                }
-                
-                Section(header: Text("⚔️ إعدادات الهجوم")) {
-                    Toggle("هجوم تلقائي", isOn: $bot.farmingSettings.autoAttackEnabled)
-                    Toggle("استخدم جواسيس فقط", isOn: $bot.farmingSettings.useOnlyScouts)
-                    Toggle("حفظ التقارير", isOn: $bot.farmingSettings.saveReports)
-                    
-                    HStack {
-                        Text("أقل موارد للهجوم")
-                        Spacer()
-                        Picker("", selection: $bot.farmingSettings.minResourcesToAttack) {
-                            Text("100").tag(100)
-                            Text("500").tag(500)
-                            Text("1000").tag(1000)
-                            Text("2000").tag(2000)
-                            Text("5000").tag(5000)
                         }
                     }
                     
@@ -491,28 +626,41 @@ struct FarmingSettingsView: View {
                             Text("100").tag(100)
                         }
                     }
+                }
+                
+                // MARK: - Attack Settings Section
+                Section(header: Text("⚔️ إعدادات الهجوم").foregroundColor(.red)) {
+                    Toggle("هجوم تلقائي", isOn: $bot.farmingSettings.autoAttackEnabled)
+                    Toggle("تجاهل اللاعبين النشطين", isOn: $bot.farmingSettings.avoidActivePlayers)
+                    Toggle("تجاهل الجدران العالية", isOn: $bot.farmingSettings.avoidHighWall)
+                    
+                    if bot.farmingSettings.avoidHighWall {
+                        HStack {
+                            Text("أقصى مستوى جدار")
+                            Spacer()
+                            Picker("", selection: $bot.farmingSettings.maxWallLevel) {
+                                ForEach(0..<21) { level in
+                                    Text("\(level)").tag(level)
+                                }
+                            }
+                        }
+                    }
                     
                     HStack {
                         Text("هجمات/ساعة")
                         Spacer()
                         Picker("", selection: $bot.farmingSettings.maxAttacksPerHour) {
+                            Text("3").tag(3)
                             Text("5").tag(5)
                             Text("10").tag(10)
                             Text("20").tag(20)
                             Text("50").tag(50)
                         }
                     }
-                    
-                    HStack {
-                        Text("جنود للهجوم")
-                        VStack {
-                            Stepper("أقل: \(bot.farmingSettings.minTroopsToSend)", value: $bot.farmingSettings.minTroopsToSend, in: 1...50)
-                            Stepper("أقصى: \(bot.farmingSettings.maxTroopsToSend)", value: $bot.farmingSettings.maxTroopsToSend, in: 1...100)
-                        }
-                    }
                 }
                 
-                Section(header: Text("⏱️ فترات الهجوم")) {
+                // MARK: - Timing Section
+                Section(header: Text("⏱️ التوقيت").foregroundColor(.purple)) {
                     HStack {
                         Text("فترة الهجوم")
                         Spacer()
@@ -527,6 +675,40 @@ struct FarmingSettingsView: View {
                             Text("ساعة").tag(60)
                         }
                     }
+                    
+                    Toggle("تأخير عشوائي بين الهجمات", isOn: $bot.farmingSettings.randomDelay)
+                    
+                    if bot.farmingSettings.randomDelay {
+                        HStack {
+                            Text("أقل تأخير")
+                            Spacer()
+                            Picker("", selection: $bot.farmingSettings.minDelay) {
+                                Text("10 ثواني").tag(10)
+                                Text("30 ثانية").tag(30)
+                                Text("دقيقة").tag(60)
+                                Text("دقيقتين").tag(120)
+                            }
+                        }
+                        
+                        HStack {
+                            Text("أقصى تأخير")
+                            Spacer()
+                            Picker("", selection: $bot.farmingSettings.maxDelay) {
+                                Text("30 ثانية").tag(30)
+                                Text("دقيقة").tag(60)
+                                Text("دقيقتين").tag(120)
+                                Text("5 دقائق").tag(300)
+                            }
+                        }
+                    }
+                }
+                
+                // MARK: - Advanced Section
+                Section(header: Text("🔧 متقدم").foregroundColor(.gray)) {
+                    Toggle("استخدم جواسيس فقط", isOn: $bot.farmingSettings.useOnlyScouts)
+                    Toggle("حفظ التقارير", isOn: $bot.farmingSettings.saveReports)
+                    Toggle("قبول المزارع تلقائي", isOn: $bot.farmingSettings.autoAcceptFarms)
+                    Toggle("إرسال مزارع تلقائي", isOn: $bot.farmingSettings.autoSendFarms)
                 }
             }
             .navigationTitle("⚙️ إعدادات البوت")

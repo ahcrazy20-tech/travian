@@ -49,18 +49,57 @@ struct FarmingSettings: Codable {
     var isEnabled: Bool = false
     var autoScoutEnabled: Bool = true
     var autoAttackEnabled: Bool = false
-    var minResourcesToAttack: Int = 500
+    
+    // MARK: - Resource Filters (فلاتر الموارد)
+    var minWoodToAttack: Int = 200
+    var minClayToAttack: Int = 200
+    var minIronToAttack: Int = 200
+    var minWheatToAttack: Int = 100
+    var minTotalResources: Int = 500
+    var searchForWood: Bool = true
+    var searchForClay: Bool = true
+    var searchForIron: Bool = true
+    var searchForWheat: Bool = true
+    
+    // MARK: - Troop Settings (إعدادات الجنود)
+    var usePercentageOfTroops: Bool = true  // Use percentage instead of fixed number
+    var troopPercentage: Int = 50  // Use 50% of available troops
+    var fixedTroopCount: Int = 20  // Fixed number if not using percentage
+    var minTroopsToSend: Int = 5
+    var maxTroopsToSend: Int = 100
+    var keepTroopsInVillage: Int = 10  // Always keep this many troops at home
+    var preferScouts: Bool = false  // Send scouts first
+    var scoutCount: Int = 3  // Number of scouts to send
+    
+    // MARK: - Distance & Risk (المسافة والمخاطرة)
     var maxDistance: Double = 20.0
-    var scoutInterval: TimeInterval = 300 // 5 minutes
-    var attackInterval: TimeInterval = 600 // 10 minutes
-    var maxAttacksPerHour: Int = 10
     var avoidActivePlayers: Bool = true
     var avoidHighWall: Bool = true
     var maxWallLevel: Int = 5
+    var avoidTribes: [String] = []  // Tribes to avoid
+    
+    // MARK: - Timing (التوقيت)
+    var scoutInterval: TimeInterval = 300  // 5 minutes
+    var attackInterval: TimeInterval = 600  // 10 minutes
+    var maxAttacksPerHour: Int = 10
+    var randomDelay: Bool = true  // Add random delay between attacks
+    var minDelay: Int = 30  // Minimum delay in seconds
+    var maxDelay: Int = 120  // Maximum delay in seconds
+    
+    // MARK: - Auto Retreat (الهروب التلقائي)
+    var autoRetreatOnAttack: Bool = true  // هروب تلقائي لما يهاجموني
+    var retreatToOasis: Bool = false  // هروب لواحة
+    var retreatTargetX: Int = 0  // إحداثيات الهروب
+    var retreatTargetY: Int = 0
+    var retreatAllTroops: Bool = true  // هروب كل الجنود
+    var keepDefenders: Bool = false  // Keep some troops to defend
+    var defenderCount: Int = 5  // Number of troops to keep
+    
+    // MARK: - Advanced (متقدم)
     var useOnlyScouts: Bool = false
-    var minTroopsToSend: Int = 1
-    var maxTroopsToSend: Int = 20
     var saveReports: Bool = true
+    var autoAcceptFarms: Bool = true  // Auto accept farm lists
+    var autoSendFarms: Bool = false  // Auto send farm lists
 }
 
 // MARK: - Spy & Attack Bot
@@ -265,8 +304,8 @@ class SpyAttackBot: ObservableObject {
     }
     
     private func analyzeTarget(_ village: VillageInfo) -> AttackTarget? {
-        // Skip if not enough resources
-        guard village.totalResources >= farmingSettings.minResourcesToAttack else { return nil }
+        // Check resource filters
+        guard passesResourceFilter(village) else { return nil }
         
         // Skip if too far
         guard village.distance <= farmingSettings.maxDistance else { return nil }
@@ -291,7 +330,7 @@ class SpyAttackBot: ObservableObject {
             return nil
         }
         
-        // Calculate recommended troops
+        // Calculate recommended troops (will be adjusted based on available troops)
         let baseTroops = max(farmingSettings.minTroopsToSend, village.totalResources / 100)
         let recommendedTroops = min(farmingSettings.maxTroopsToSend, baseTroops + (village.hasTroops ? 5 : 0))
         
@@ -343,11 +382,31 @@ class SpyAttackBot: ObservableObject {
             return
         }
         
-        sendAttack(to: target)
+        // Get available troops first
+        getAvailableTroops { [weak self] availableTroops in
+            guard let self = self else { return }
+            
+            let troopCount = self.calculateTroopCount(availableTroops: availableTroops)
+            
+            guard troopCount > 0 else {
+                print("⚠️ No troops available for attack")
+                return
+            }
+            
+            // Add random delay if enabled
+            if self.farmingSettings.randomDelay {
+                let delay = Int.random(in: self.farmingSettings.minDelay...self.farmingSettings.maxDelay)
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(delay)) {
+                    self.sendAttack(to: target, troopCount: troopCount)
+                }
+            } else {
+                self.sendAttack(to: target, troopCount: troopCount)
+            }
+        }
     }
     
-    private func sendAttack(to target: AttackTarget) {
-        let troopCount = target.recommendedTroops
+    private func sendAttack(to target: AttackTarget, troopCount: Int? = nil) {
+        let troopsToSend = troopCount ?? target.recommendedTroops
         let villageId = target.village.id
         
         let js = """
@@ -368,10 +427,24 @@ class SpyAttackBot: ObservableObject {
                     if (xInput) xInput.value = '\(target.village.x)';
                     if (yInput) yInput.value = '\(target.village.y)';
                     
-                    // Set troop count
-                    var troopInput = document.querySelector('input[name*="troop"], input[name*="t1"], .troop_input');
-                    if (troopInput) {
-                        troopInput.value = '\(troopCount)';
+                    // Set troop count - try multiple selectors
+                    var troopInputs = document.querySelectorAll('input[name*="t"], input[class*="troop_input"], .troop_input input');
+                    troopInputs.forEach(function(input, index) {
+                        if (index === 0) {
+                            // Set first troop type to the calculated amount
+                            input.value = '\(troopsToSend)';
+                        } else {
+                            // Set other troop types to 0
+                            input.value = '0';
+                        }
+                    });
+                    
+                    // If no troop inputs found, try generic selector
+                    if (troopInputs.length === 0) {
+                        var troopInput = document.querySelector('input[name*="troop"], input[name*="t1"]');
+                        if (troopInput) {
+                            troopInput.value = '\(troopsToSend)';
+                        }
                     }
                     
                     // Select attack type (raid/normal)
@@ -385,7 +458,7 @@ class SpyAttackBot: ObservableObject {
                         var sendBtn = document.querySelector('#btn_send, .send_button, input[type="submit"], button[type="submit"]');
                         if (sendBtn) {
                             sendBtn.click();
-                            return JSON.stringify({success: true, message: 'Attack sent to \(target.village.name)'});
+                            return JSON.stringify({success: true, message: 'Attack sent to \(target.village.name) with \(troopsToSend) troops'});
                         }
                         return JSON.stringify({success: false, message: 'Send button not found'});
                     }, 500);
@@ -413,7 +486,7 @@ class SpyAttackBot: ObservableObject {
                     // Record attack
                     let record = AttackRecord(
                         targetVillage: target.village.name,
-                        troopsSent: troopCount,
+                        troopsSent: troopsToSend,
                         timestamp: Date(),
                         estimatedLoot: target.estimatedLoot,
                         result: .pending
@@ -423,7 +496,7 @@ class SpyAttackBot: ObservableObject {
                     // Send notification
                     self.sendNotification(
                         title: "⚔️ هجوم تم إرساله!",
-                        body: "هجوم على \(target.village.name) بـ \(troopCount) جندي"
+                        body: "هجوم على \(target.village.name) بـ \(troopsToSend) جندي"
                     )
                     
                     // Remove target from list
@@ -642,9 +715,311 @@ class SpyAttackBot: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
     
+    // MARK: - Auto Retreat (الهروب التلقائي)
+    
+    func checkForIncomingAttacks() {
+        let js = """
+        (function() {
+            try {
+                var attacks = [];
+                
+                // Check for incoming attacks
+                var attackRows = document.querySelectorAll('.attack_row, [class*="incoming"], tr[class*="attack"], .inAttack');
+                
+                attackRows.forEach(function(row, index) {
+                    var timeEl = row.querySelector('.timer, [class*="time"], .duration');
+                    var troopsEl = row.querySelector('.troop_count, [class*="troop"]');
+                    var fromEl = row.querySelector('.from, [class*="source"]');
+                    
+                    var time = timeEl ? timeEl.textContent.trim() : '';
+                    var troops = troopsEl ? parseInt(troopsEl.textContent) || 0 : 0;
+                    var from = fromEl ? fromEl.textContent.trim() : '';
+                    
+                    // Parse time to seconds
+                    var timeParts = time.split(':');
+                    var seconds = 0;
+                    if (timeParts.length >= 3) {
+                        seconds = parseInt(timeParts[0]) * 3600 + parseInt(timeParts[1]) * 60 + parseInt(timeParts[2]);
+                    } else if (timeParts.length >= 2) {
+                        seconds = parseInt(timeParts[0]) * 60 + parseInt(timeParts[1]);
+                    }
+                    
+                    attacks.push({
+                        index: index,
+                        time: time,
+                        seconds: seconds,
+                        troops: troops,
+                        from: from,
+                        isScout: troops <= 3
+                    });
+                });
+                
+                // Also check for attack warning banner
+                var warning = document.querySelector('.attack_warning, [class*="attackWarning"], #attack_alert');
+                var hasWarning = warning !== null;
+                
+                return JSON.stringify({
+                    success: true,
+                    attacks: attacks,
+                    count: attacks.length,
+                    hasWarning: hasWarning,
+                    url: window.location.href
+                });
+            } catch(e) {
+                return JSON.stringify({success: false, error: e.message});
+            }
+        })();
+        """
+        
+        webView?.evaluateJavaScript(js) { [weak self] result, error in
+            guard let self = self else { return }
+            
+            if let jsonString = result as? String,
+               let data = jsonString.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let success = json["success"] as? Bool, success,
+               let attacks = json["attacks"] as? [[String: Any]],
+               let count = json["count"] as? Int, count > 0 {
+                
+                DispatchQueue.main.async {
+                    // Send notification about incoming attacks
+                    self.sendNotification(
+                        title: "⚠️ هجوم قادم!",
+                        body: "في \(count) هجوم جايين عليك!"
+                    )
+                    
+                    // Auto retreat if enabled
+                    if self.farmingSettings.autoRetreatOnAttack {
+                        self.executeRetreat()
+                    }
+                }
+            }
+        }
+    }
+    
+    func executeRetreat() {
+        let keepDefenders = farmingSettings.keepDefenders
+        let defenderCount = farmingSettings.defenderCount
+        
+        let js = """
+        (function() {
+            try {
+                // Navigate to rally point
+                var rallyLink = document.querySelector('a[href*="build.php?id=39"], a[href*="rally"], [class*="rally_point"]');
+                if (rallyLink) {
+                    rallyLink.click();
+                }
+                
+                setTimeout(function() {
+                    // Get all available troops
+                    var troopInputs = document.querySelectorAll('input[name*="t"], input[class*="troop_input"], .troop_input input');
+                    var totalTroops = 0;
+                    var troopValues = [];
+                    
+                    troopInputs.forEach(function(input) {
+                        var max = input.getAttribute('max') || input.parentElement.querySelector('.max') || '0';
+                        var maxVal = parseInt(max) || parseInt(input.max) || 0;
+                        troopValues.push({input: input, max: maxVal});
+                        totalTroops += maxVal;
+                    });
+                    
+                    // Calculate troops to send
+                    var troopsToSend = totalTroops;
+                    if (\(keepDefenders ? "true" : "false")) {
+                        troopsToSend = Math.max(0, totalTroops - \(defenderCount));
+                    }
+                    
+                    if (troopsToSend <= 0) {
+                        return JSON.stringify({success: false, message: 'No troops to retreat'});
+                    }
+                    
+                    // Set troops to send (all or minus defenders)
+                    troopValues.forEach(function(tv) {
+                        if (\(keepDefenders ? "true" : "false")) {
+                            // Keep some defenders
+                            var toSend = Math.max(0, tv.max - Math.ceil(\(defenderCount) / troopValues.length));
+                            tv.input.value = toSend.toString();
+                        } else {
+                            // Send all
+                            tv.input.value = tv.max.toString();
+                        }
+                    });
+                    
+                    // Set target coordinates (retreat target or oasis)
+                    var xInput = document.querySelector('input[name="x"], input[name="coord_x"], #xCoordInput');
+                    var yInput = document.querySelector('input[name="y"], input[name="coord_y"], #yCoordInput');
+                    
+                    var targetX = \(farmingSettings.retreatTargetX);
+                    var targetY = \(farmingSettings.retreatTargetY);
+                    
+                    if (targetX !== 0 || targetY !== 0) {
+                        // Use custom retreat target
+                        if (xInput) xInput.value = targetX.toString();
+                        if (yInput) yInput.value = targetY.toString();
+                    } else {
+                        // Find nearest oasis to retreat to
+                        var oasisLinks = document.querySelectorAll('a[href*="karte.php"][class*="oasis"], .oasis_link');
+                        if (oasisLinks.length > 0) {
+                            oasisLinks[0].click();
+                        }
+                    }
+                    
+                    // Select reinforce/transfer mode (not attack)
+                    var reinforceOption = document.querySelector('input[value="2"], input[name="type"][value="2"], .reinforce_option, [class*="support"]');
+                    if (reinforceOption) {
+                        reinforceOption.click();
+                    }
+                    
+                    // Click send
+                    setTimeout(function() {
+                        var sendBtn = document.querySelector('#btn_send, .send_button, input[type="submit"], button[type="submit"]');
+                        if (sendBtn) {
+                            sendBtn.click();
+                            return JSON.stringify({success: true, message: 'Retreating ' + troopsToSend + ' troops'});
+                        }
+                        return JSON.stringify({success: false, message: 'Send button not found'});
+                    }, 500);
+                    
+                }, 1000);
+                
+                return JSON.stringify({success: true, message: 'Preparing retreat...'});
+            } catch(e) {
+                return JSON.stringify({success: false, error: e.message});
+            }
+        })();
+        """
+        
+        webView?.evaluateJavaScript(js) { [weak self] result, error in
+            guard let self = self else { return }
+            
+            if let jsonString = result as? String,
+               let data = jsonString.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let success = json["success"] as? Bool, success {
+                
+                let message = json["message"] as? String ?? "Retreat executed"
+                
+                DispatchQueue.main.async {
+                    self.sendNotification(
+                        title: "🏃 هروب تلقائي!",
+                        body: message
+                    )
+                }
+            }
+        }
+    }
+    
+    // MARK: - Get Available Troops (الحصول على الجنود المتاحين)
+    
+    func getAvailableTroops(completion: @escaping (Int) -> Void) {
+        let js = """
+        (function() {
+            try {
+                var totalTroops = 0;
+                
+                // Method 1: Check rally point
+                var troopElements = document.querySelectorAll('.troop_count, [class*="troop_count"], .unit_count');
+                troopElements.forEach(function(el) {
+                    var count = parseInt(el.textContent.replace(/[^0-9]/g, ''));
+                    if (!isNaN(count)) totalTroops += count;
+                });
+                
+                // Method 2: Check village overview
+                var overviewTroops = document.querySelectorAll('.troops_list .count, [class*="troops"] .count');
+                overviewTroops.forEach(function(el) {
+                    var count = parseInt(el.textContent.replace(/[^0-9]/g, ''));
+                    if (!isNaN(count)) totalTroops += count;
+                });
+                
+                // Method 3: Check for troop inputs with max values
+                var troopInputs = document.querySelectorAll('input[name*="t"], input[class*="troop"]');
+                troopInputs.forEach(function(input) {
+                    var max = parseInt(input.getAttribute('max') || input.max || '0');
+                    if (!isNaN(max)) totalTroops += max;
+                });
+                
+                return JSON.stringify({success: true, totalTroops: totalTroops});
+            } catch(e) {
+                return JSON.stringify({success: false, error: e.message, totalTroops: 0});
+            }
+        })();
+        """
+        
+        webView?.evaluateJavaScript(js) { result, error in
+            if let jsonString = result as? String,
+               let data = jsonString.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let totalTroops = json["totalTroops"] as? Int {
+                completion(totalTroops)
+            } else {
+                completion(0)
+            }
+        }
+    }
+    
+    // MARK: - Enhanced Attack with Percentage (هجوم بنسبة من الجنود)
+    
+    private func calculateTroopCount(availableTroops: Int) -> Int {
+        if farmingSettings.usePercentageOfTroops {
+            // Use percentage of available troops
+            let percentageCount = availableTroops * farmingSettings.troopPercentage / 100
+            let afterKeep = max(0, percentageCount - farmingSettings.keepTroopsInVillage)
+            return min(farmingSettings.maxTroopsToSend, max(farmingSettings.minTroopsToSend, afterKeep))
+        } else {
+            // Use fixed number
+            let afterKeep = max(0, farmingSettings.fixedTroopCount)
+            return min(farmingSettings.maxTroopsToSend, max(farmingSettings.minTroopsToSend, afterKeep))
+        }
+    }
+    
+    // MARK: - Check Resource Filters (فحص فلاتر الموارد)
+    
+    private func passesResourceFilter(_ village: VillageInfo) -> Bool {
+        // Check if village has minimum resources for each type
+        if farmingSettings.searchForWood && village.wood < farmingSettings.minWoodToAttack {
+            return false
+        }
+        if farmingSettings.searchForClay && village.clay < farmingSettings.minClayToAttack {
+            return false
+        }
+        if farmingSettings.searchForIron && village.iron < farmingSettings.minIronToAttack {
+            return false
+        }
+        if farmingSettings.searchForWheat && village.wheat < farmingSettings.minWheatToAttack {
+            return false
+        }
+        
+        // Check total resources
+        if village.totalResources < farmingSettings.minTotalResources {
+            return false
+        }
+        
+        return true
+    }
+    
     deinit {
         stopScouting()
         stopAutoAttack()
+    }
+}
+
+// MARK: - Extension for manual attack and monitoring
+
+extension SpyAttackBot {
+    func sendAttackManually(to target: AttackTarget) {
+        // Get available troops first
+        getAvailableTroops { [weak self] availableTroops in
+            guard let self = self else { return }
+            let troopCount = self.calculateTroopCount(availableTroops: availableTroops)
+            self.sendAttack(to: target, troopCount: troopCount)
+        }
+    }
+    
+    func startAttackMonitoring() {
+        // Monitor for incoming attacks every 30 seconds
+        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.checkForIncomingAttacks()
+        }
     }
 }
 
