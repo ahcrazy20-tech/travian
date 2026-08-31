@@ -1,0 +1,713 @@
+import Foundation
+import WebKit
+
+// MARK: - GameEngine
+//
+// محرك قراءة حقيقي للعبة "عصر التتار" (محرك Travian الكلاسيكي).
+// بدل التخمين، بنستخدم الـ DOM الحقيقي للعبة:
+//   - شريط الموارد:  #l1 خشب / #l2 طين / #l3 حديد / #l4 قمح (صيغة "الحالي/السعة")
+//   - نقطة التجمع:   build.php?id=39  (جنود القرية + إرسال الهجمات a2b.php)
+//   - الثكنات:       build.php?id=19 (تدريب، input اسمه t1..t10 + رابط الحد الأقصى)
+//   - الخريطة:       karte.php       (قرى حقيقية بإحداثيات وروابط karte.php?d=)
+//   - التقارير:      berichte.php    (تقارير التجسس: موارد + جنود + جدار)
+// ولو أي selector ما لقاش حاجة، بنرجّع fallback عام بدل ما نفشل بصمت.
+
+// MARK: - Models
+
+struct GameResources: Equatable {
+    var wood = 0
+    var clay = 0
+    var iron = 0
+    var crop = 0
+    var woodCap = 0
+    var clayCap = 0
+    var ironCap = 0
+    var cropCap = 0
+    var cropProd = 0
+
+    var summary: String {
+        "🪵\(wood) 🧱\(clay) ⚙️\(iron) 🌾\(crop)"
+    }
+}
+
+struct HomeUnit: Identifiable, Equatable {
+    let id: Int        // رقم الوحدة 1..30 (u1..u30 في اللعبة)
+    var name: String
+    var count: Int
+}
+
+struct TrainableUnit: Identifiable, Equatable {
+    let id: String     // اسم الـ input الحقيقي في الفورم (t1..t10)
+    var name: String
+    var max: Int       // الحد الأقصى القابل للتدريب دلوقتي (من اللعبة نفسها)
+    var costWood = 0
+    var costClay = 0
+    var costIron = 0
+    var costCrop = 0
+
+    /// أدنى تكلفة مورد = أقصى عدد نقدر نكلفه بالمورد الأضيق.
+    func affordable(with r: GameResources) -> Int {
+        var m = Int.max
+        let caps: [(Int, Int)] = [
+            (costWood, r.wood), (costClay, r.clay),
+            (costIron, r.iron), (costCrop, r.crop),
+        ]
+        for (cost, have) in caps where cost > 0 {
+            m = min(m, have / cost)
+        }
+        if m == Int.max { return max }
+        return min(m, max)
+    }
+}
+
+struct MapVillage: Identifiable, Equatable {
+    let id: String     // رقم القرية من الرابط d=12345
+    var name: String
+    var x = 0
+    var y = 0
+    var player = ""
+    var population = 0
+    var href = ""      // الرابط الكامل karte.php?d=...&c=... لفتح القرية
+}
+
+struct ScoutReport: Identifiable {
+    let id: String
+    var subject: String
+    var dateText: String
+    var wood = 0
+    var clay = 0
+    var iron = 0
+    var crop = 0
+    var wallLevel = -1
+    var troopsText = ""
+}
+
+// MARK: - Engine
+
+final class GameEngine: NSObject {
+    weak var webView: WKWebView?
+
+    func attach(_ webView: WKWebView?) {
+        self.webView = webView
+    }
+
+    // MARK: تشخيص الصفحة
+
+    /// نوع الصفحة الحالية من الرابط نفسه (مضمون 100% بدل التخمين في الـ DOM).
+    static func pageKind(from urlString: String) -> String {
+        guard let url = URL(string: urlString),
+              let host = url.host, host.contains("utatar") else { return "other" }
+        let path = url.lastPathComponent.lowercased()
+        let q = url.query ?? ""
+        if path.hasPrefix("dorf1") { return "dorf1" }
+        if path.hasPrefix("dorf2") { return "dorf2" }
+        if path.hasPrefix("a2b") { return "a2b" }
+        if path.hasPrefix("karte") { return q.contains("d=") ? "villageInfo" : "map" }
+        if path.hasPrefix("build") {
+            if q.range(of: #"id=(19|20|21|25|26|29|30)"#, options: .regularExpression) != nil {
+                return "training"
+            }
+            return "building"
+        }
+        if path.hasPrefix("berichte") { return "reports" }
+        if path.hasPrefix("login") || path.hasPrefix("sign") || path.hasPrefix("anmelden") {
+            return "login"
+        }
+        return "other"
+    }
+
+    /// تنفيذ JS وترجع JSON String مفكوك كمفتاح/قيمة.
+    private func runJSON(_ js: String, completion: @escaping ([String: Any]?) -> Void) {
+        guard let webView = webView else {
+            completion(nil)
+            return
+        }
+        webView.evaluateJavaScript(js) { result, _ in
+            guard let s = result as? String,
+                  let data = s.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                completion(nil)
+                return
+            }
+            completion(obj)
+        }
+    }
+
+    /// تنفيذ JS وترجعة JSON String مفكوكة كمصفوفة.
+    private func runJSONArray(_ js: String, completion: @escaping ([[String: Any]]?) -> Void) {
+        guard let webView = webView else {
+            completion(nil)
+            return
+        }
+        webView.evaluateJavaScript(js) { result, _ in
+            guard let s = result as? String,
+                  let data = s.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                completion(nil)
+                return
+            }
+            completion(obj)
+        }
+    }
+
+    // MARK: - الموارد (حقيقية من #l1..#l4)
+
+    func readResources(completion: @escaping (GameResources?) -> Void) {
+        runJSON(Self.resourcesJS) { obj in
+            guard let obj = obj, let res = obj["resources"] as? [String: Any] else {
+                completion(nil)
+                return
+            }
+            var g = GameResources()
+            g.wood = Self.int(res["wood"])
+            g.clay = Self.int(res["clay"])
+            g.iron = Self.int(res["iron"])
+            g.crop = Self.int(res["crop"])
+            g.woodCap = Self.int(res["woodCap"])
+            g.clayCap = Self.int(res["clayCap"])
+            g.ironCap = Self.int(res["ironCap"])
+            g.cropCap = Self.int(res["cropCap"])
+            g.cropProd = Self.int(res["cropProd"])
+            completion(g)
+        }
+    }
+
+    /// جافاسكريبت قراءة الموارد من الخانات الحقيقية + fallback عام.
+    static let resourcesJS = """
+    (function(){
+      function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
+      function cell(sel){
+        var e=document.querySelector(sel);
+        if(!e) return null;
+        var t=(e.getAttribute('title')||'')+' '+(e.textContent||'');
+        var m=t.match(/([0-9][0-9,.]*)\\s*\\/\\s*([0-9][0-9,.]*)/);
+        if(m) return {cur:pi(m[1]),cap:pi(m[2])};
+        return {cur:pi(e.textContent),cap:0};
+      }
+      var w=cell('#l1'), c=cell('#l2'), i=cell('#l3'), k=cell('#l4');
+      var prod=0;
+      var l5=document.querySelector('#l5');
+      if(l5) prod=pi(l5.textContent);
+      if(w===null&&c===null&&i===null&&k===null){
+        // fallback عام: أي أرقام بشكل cur/cap في شريط الموارد
+        var m=document.body?document.body.innerText.match(/([0-9]{2,})\\s*\\/\\s*([0-9]{2,})/):null;
+        if(m){ w={cur:pi(m[1]),cap:pi(m[2])}; }
+      }
+      return JSON.stringify({resources:{
+        wood:w?w.cur:0, clay:c?c.cur:0, iron:i?i.cur:0, crop:k?k.cur:0,
+        woodCap:w?w.cap:0, clayCap:c?c.cap:0, ironCap:i?i.cap:0, cropCap:k?k.cap:0,
+        cropProd:prod
+      }});
+    })();
+    """
+
+    // MARK: - الجنود الموجودين في القرية
+
+    func readHomeTroops(completion: @escaping ([HomeUnit]) -> Void) {
+        runJSONArray(Self.homeTroopsJS) { arr in
+            var byId: [Int: HomeUnit] = [:]
+            for item in arr ?? [] {
+                let id = Self.int(item["id"])
+                guard id >= 1, id <= 30 else { continue }
+                let name = item["name"] as? String ?? ""
+                let count = Self.int(item["count"])
+                if var existing = byId[id] {
+                    existing.count = max(existing.count, count)
+                    if existing.name.isEmpty { existing.name = name }
+                    byId[id] = existing
+                } else {
+                    byId[id] = HomeUnit(id: id, name: name, count: count)
+                }
+            }
+            completion(Array(byId.values).sorted { $0.id < $1.id })
+        }
+    }
+
+    static let homeTroopsJS = """
+    (function(){
+      function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
+      var out=[];
+      var imgs=document.querySelectorAll('img[class*="unit"], img[src*="/u/u"], img[src*="un/u/"], img[src*="img/u/"]');
+      imgs.forEach(function(img){
+        var m=(img.getAttribute('class')||'')+' '+(img.getAttribute('src')||'');
+        var um=m.match(/u(\\d{1,2})/);
+        if(!um) return;
+        var uid=parseInt(um[1],10);
+        if(uid<1||uid>30) return;
+        var name=img.getAttribute('title')||img.getAttribute('alt')||'';
+        var count=0;
+        var tr=img.closest('tr');
+        if(tr){
+          var v=tr.querySelector('td.val, td[class*="count"], td.un');
+          if(v) count=pi(v.textContent);
+          if(!count){
+            var nums=(tr.textContent||'').match(/\\d+/g)||[];
+            if(nums.length) count=pi(nums[nums.length-1]);
+          }
+        }
+        var td=img.closest('td,div');
+        if(!count && td && td.parentElement){
+          var sib=td.parentElement.textContent||'';
+          var sn=sib.match(/\\d+/g);
+          if(sn) count=pi(sn[sn.length-1]);
+        }
+        out.push({id:uid,name:name,count:count});
+      });
+      return JSON.stringify(out);
+    })();
+    """
+
+    // MARK: - الوحدات القابلة للتدريب (صفحة الثكنات/الإسطبل/الورشة)
+
+    func readTrainableUnits(completion: @escaping ([TrainableUnit]) -> Void) {
+        runJSON(Self.trainableJS) { obj in
+            guard let obj = obj else {
+                completion([])
+                return
+            }
+            var unitsOut: [TrainableUnit] = []
+            for item in obj["units"] as? [[String: Any]] ?? [] {
+                let input = item["input"] as? String ?? ""
+                guard !input.isEmpty else { continue }
+                var u = TrainableUnit(id: input, name: item["name"] as? String ?? "")
+                u.max = Self.int(item["max"])
+                let costs = item["costs"] as? [Any] ?? []
+                if costs.count >= 4 {
+                    u.costWood = Self.int(costs[0])
+                    u.costClay = Self.int(costs[1])
+                    u.costIron = Self.int(costs[2])
+                    u.costCrop = Self.int(costs[3])
+                }
+                unitsOut.append(u)
+            }
+            completion(unitsOut)
+        }
+    }
+
+    static let trainableJS = """
+    (function(){
+      function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
+      var form=document.querySelector('form[action*="build.php"]');
+      var units=[];
+      if(form){
+        var inputs=form.querySelectorAll('input[name]');
+        inputs.forEach(function(inp){
+          var n=inp.getAttribute('name');
+          if(!/^t[0-9]{1,2}$/.test(n)) return;
+          var row=inp.closest('tr')||inp.closest('div.table')||inp.closest('div')||inp.parentElement;
+          var name='';
+          var uid=0;
+          if(row){
+            var img=row.querySelector('img[class*="unit"], img[src*="/u/"], img[class*="u"]');
+            if(img){
+              var um=((img.getAttribute('class')||'')+' '+(img.getAttribute('src')||'')).match(/u(\\d{1,2})/);
+              if(um) uid=parseInt(um[1],10);
+              name=img.getAttribute('title')||img.getAttribute('alt')||'';
+            }
+            if(!name){
+              var a=row.querySelector('a');
+              if(a) name=(a.getAttribute('title')||a.textContent||'').trim();
+            }
+          }
+          var max=0;
+          var mx=document.querySelector('a[href*="'+n+'.value="]');
+          if(mx) max=pi(mx.textContent);
+          if(!max && row){
+            var mxt=row.textContent.match(/\\((\\d+)\\)/);
+            if(mxt) max=parseInt(mxt[1],10);
+          }
+          var cw=0,cc=0,ci=0,cp=0;
+          if(row){
+            var cells=row.querySelectorAll('img[src*="r1"], img[src*="r2"], img[src*="r3"], img[src*="r4"], img[class*="res r"], img[class*="r1"], img[class*="r2"], img[class*="r3"], img[class*="r4"]');
+            var vals=[0,0,0,0];
+            cells.forEach(function(ci2,ix){
+              if(ix>3) return;
+              var holder=ci2.parentElement;
+              var txt=holder?(holder.textContent||''):'';
+              var nm=txt.match(/\\d+/);
+              if(nm) vals[ix]=parseInt(nm[0],10);
+            });
+            cw=vals[0]; cc=vals[1]; ci=vals[2]; cp=vals[3];
+          }
+          units.push({input:n, uid:uid, name:name, max:max, costs:[cw,cc,ci,cp]});
+        });
+      }
+      return JSON.stringify({isTrainPage: units.length>0, units:units});
+    })();
+    """
+
+    // MARK: - التدريب (فورم حقيقي بالاسم، مش بالدور!)
+
+    func trainUnit(_ inputName: String, count: Int, completion: ((String) -> Void)? = nil) {
+        let js = Self.trainOneJS(inputName: inputName, count: count)
+        runJSON(js) { obj in
+            let ok = (obj?["ok"] as? Bool) ?? false
+            let msg = (obj?["message"] as? String) ?? (ok ? "تم" : "فشل")
+            completion?(msg)
+        }
+    }
+
+    /// يدرّب كل نوع بالعدد الأقصى المسموح (يستخدم قيم max الحقيقية من الصفحة).
+    func trainAllMax(_ units: [TrainableUnit], completion: ((String) -> Void)? = nil) {
+        let js = Self.trainManyJS(units.map { ($0.id, $0.max > 0 ? $0.max : 0) })
+        runJSON(js) { obj in
+            let n = (obj?["filled"] as? Int) ?? 0
+            completion?(n > 0 ? "تم تعبئة \(n) نوع وبدء التدريب ✅" : "مفيش حاجة اتبعت — تأكد إنك على صفحة الثكنات")
+        }
+    }
+
+    static func trainOneJS(inputName: String, count: Int) -> String {
+        trainManyJS([(inputName, count)])
+    }
+
+    static func trainManyJS(_ pairs: [(String, Int)]) -> String {
+        let arr = "["
+        for (i, p) in pairs.enumerated() {
+            let name = p.0.replacingOccurrences(of: "'", with: "")
+            arr += "['\(name)',\(p.1)]"
+            if i < pairs.count - 1 { arr += "," }
+        }
+        arr += "]"
+        return """
+        (function(){
+          try{
+            var sels=\(arr);
+            var form=document.querySelector('form[action*="build.php"]');
+            if(!form) return JSON.stringify({ok:false,filled:0,message:'لا يوجد نموذج تدريب في هذه الصفحة'});
+            var filled=0;
+            sels.forEach(function(s){
+              var inp=form.querySelector('input[name="'+s[0]+'"]');
+              if(!inp) return;
+              var n=String(s[1]);
+              var proto=HTMLInputElement.prototype;
+              var setter=Object.getOwnPropertyDescriptor(proto,'value').set;
+              try{ setter.call(inp,n); }catch(e){ inp.value=n; }
+              inp.dispatchEvent(new Event('input',{bubbles:true}));
+              inp.dispatchEvent(new Event('change',{bubbles:true}));
+              filled++;
+            });
+            if(filled===0) return JSON.stringify({ok:false,filled:0,message:'لم أجد حقول التدريب'});
+            var btn=form.querySelector('button[type="submit"], input[type="submit"], button[name="s"], input[type="image"]');
+            if(!btn) return JSON.stringify({ok:false,filled:filled,message:'وجدت الحقول لكن لا يوجد زر تدريب'});
+            btn.click();
+            return JSON.stringify({ok:true,filled:filled,message:'بدأ التدريب'});
+          }catch(e){ return JSON.stringify({ok:false,filled:0,message:e.message}); }
+        })();
+        """
+    }
+
+    // MARK: - مسح الخريطة (قرى حقيقية بإحداثيات)
+
+    func scanMapVillages(completion: @escaping ([MapVillage]) -> Void) {
+        runJSONArray(Self.mapScanJS) { arr in
+            var villages: [MapVillage] = []
+            var seen = Set<String>()
+            for item in arr ?? [] {
+                let vid = String(Self.int(item["vid"]))
+                guard vid != "0", !seen.contains(vid) else { continue }
+                seen.insert(vid)
+                var v = MapVillage(
+                    id: vid,
+                    name: item["name"] as? String ?? "",
+                    x: Self.int(item["x"]),
+                    y: Self.int(item["y"])
+                )
+                v.player = item["player"] as? String ?? ""
+                v.population = Self.int(item["population"])
+                v.href = item["href"] as? String ?? ""
+                villages.append(v)
+            }
+            completion(villages)
+        }
+    }
+
+    static let mapScanJS = """
+    (function(){
+      function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
+      var out=[];
+      function push(href, title){
+        var dm=href.match(/d=(\\d+)/);
+        if(!dm) return;
+        var xy=title.match(/\\((-?\\d{1,4})\\s*\\|\\s*(-?\\d{1,4})\\)/);
+        var player='';
+        var pm=title.match(/(?:اللاعب|اللاعب:|player)\\s*:?\\s*([^|()]{2,30})/i);
+        if(pm) player=pm[1].trim();
+        var pop=0;
+        var pom=title.match(/(?:السكان|population)\\s*:?\\s*([0-9]+)/i);
+        if(pom) pop=parseInt(pom[1],10);
+        var name=title.replace(/\\(-?\\d{1,4}\\s*\\|\\s*-?\\d{1,4}\\)/,'').trim();
+        if(name.length>40) name=name.substring(0,40);
+        out.push({vid:dm[1], name:name, x:xy?parseInt(xy[1],10):0, y:xy?parseInt(xy[2],10):0, player:player, population:pop, href:href});
+      }
+      document.querySelectorAll('area[href*="karte.php?d="]').forEach(function(a){
+        push(a.getAttribute('href')||'', a.getAttribute('title')||'');
+      });
+      document.querySelectorAll('#map_content div[onclick*="karte.php?d="]').forEach(function(d){
+        var oc=d.getAttribute('onclick')||'';
+        var m=oc.match(/karte\\.php\\?d=\\d+[^'"]*/);
+        if(m) push(m[0], d.getAttribute('title')||(d.textContent||'').trim());
+      });
+      document.querySelectorAll('a[href*="karte.php?d="]').forEach(function(a){
+        push(a.getAttribute('href')||'', a.getAttribute('title')||(a.textContent||'').trim());
+      });
+      return JSON.stringify(out);
+    })();
+    """
+
+    // MARK: - التجسس: فتح القرية ثم إرسال جواسيس
+
+    /// على صفحة معلومات القرية (karte.php?d=): يدوس "إرسال جنود" (رابط a2b).
+    func clickSendTroopsFromVillageInfo(completion: @escaping (Bool) -> Void) {
+        runJSON(Self.villageInfoSpyJS) { obj in
+            completion(((obj?["clicked"] as? Bool) ?? false))
+        }
+    }
+
+    static let villageInfoSpyJS = """
+    (function(){
+      try{
+        var links=document.querySelectorAll('a[href^="a2b.php?d="], a[href*="a2b.php?d="]');
+        if(links.length===0) return JSON.stringify({clicked:false});
+        links[0].click();
+        return JSON.stringify({clicked:true});
+      }catch(e){ return JSON.stringify({clicked:false,error:e.message}); }
+    })();
+    """
+
+    /// على صفحة a2b.php: يملأ عدد الجواسيس (u4 روماني / u14 توتون / u23 غالي) ويرسل غارة.
+    func sendScouts(count: Int, completion: @escaping (Bool, String) -> Void) {
+        runJSON(Self.scoutSendJS(count: count)) { obj in
+            let ok = (obj?["sent"] as? Bool) ?? false
+            let msg = (obj?["message"] as? String) ?? ""
+            completion(ok, msg)
+        }
+    }
+
+    static func scoutSendJS(count: Int) -> String {
+        """
+        (function(){
+          try{
+            function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
+            var form=document.querySelector('form[action*="a2b.php"], form[action*="a2b"]');
+            if(!form) return JSON.stringify({sent:false,message:'لا يوجد نموذج إرسال جنود (a2b)'});
+            var scoutInputs=[null,null,null];
+            form.querySelectorAll('input[name]').forEach(function(inp){
+              var n=inp.getAttribute('name');
+              if(!/^t[0-9]{1,2}$/.test(n)) return;
+              var row=inp.closest('tr')||inp.closest('div');
+              var img=row?row.querySelector('img[class*="unit"], img[src*="/u/"], img[class*="u"]'):null;
+              if(!img) return;
+              var um=((img.getAttribute('class')||'')+' '+(img.getAttribute('src')||'')).match(/u(\\d{1,2})/);
+              if(!um) return;
+              var uid=parseInt(um[1],10);
+              if(uid===4) scoutInputs[0]=inp;
+              if(uid===14) scoutInputs[1]=inp;
+              if(uid===23) scoutInputs[2]=inp;
+            });
+            var scout=scoutInputs[0]||scoutInputs[1]||scoutInputs[2];
+            if(!scout) return JSON.stringify({sent:false,message:'لم أجد جندي تجسس (تحتاج كشاف/مستكشف)'});
+            var proto=HTMLInputElement.prototype;
+            var setter=Object.getOwnPropertyDescriptor(proto,'value').set;
+            var maxv=0;
+            var mx=document.querySelector('a[href*="'+scout.getAttribute('name')+'.value="]');
+            if(mx) maxv=pi(mx.textContent);
+            var n=Math.min(\(count), maxv>0?maxv:\(count));
+            try{ setter.call(scout,String(n)); }catch(e){ scout.value=String(n); }
+            scout.dispatchEvent(new Event('input',{bubbles:true}));
+            scout.dispatchEvent(new Event('change',{bubbles:true}));
+            var raid=form.querySelector('input[name="c"][value="4"], input[value="4"]');
+            if(raid) raid.click();
+            var btn=form.querySelector('button[name="s"], button[type="submit"], input[type="image"][name="s1"], input[type="submit"]');
+            if(!btn) return JSON.stringify({sent:false,message:'لا يوجد زر إرسال'});
+            btn.click();
+            return JSON.stringify({sent:true,message:'انطلق \(count) من الجواسيس 🕵️'});
+          }catch(e){ return JSON.stringify({sent:false,message:e.message}); }
+        })();
+        """
+    }
+
+    // MARK: - الهجوم بإحداثيات (يستخدم a2b الحقيقي)
+
+    func sendAttack(x: Int, y: Int, troops: [(String, Int)], raid: Bool, completion: @escaping (Bool, String) -> Void) {
+        runJSON(Self.attackJS(x: x, y: y, troops: troops, raid: raid)) { obj in
+            let ok = (obj?["sent"] as? Bool) ?? false
+            let msg = (obj?["message"] as? String) ?? ""
+            completion(ok, msg)
+        }
+    }
+
+    static func attackJS(x: Int, y: Int, troops: [(String, Int)], raid: Bool) -> String {
+        let arr = "["
+        for (i, t) in troops.enumerated() {
+            let name = t.0.replacingOccurrences(of: "'", with: "")
+            arr += "['\(name)',\(t.1)]"
+            if i < troops.count - 1 { arr += "," }
+        }
+        arr += "]"
+        return """
+        (function(){
+          try{
+            var form=document.querySelector('form[action*="a2b.php"], form[action*="a2b"]');
+            if(!form) return JSON.stringify({sent:false,message:'افتح نقطة التجمع (القرية ← نقطة التجمع) الأول'});
+            var sels=\(arr);
+            var filled=0;
+            sels.forEach(function(s){
+              var inp=form.querySelector('input[name="'+s[0]+'"]');
+              if(!inp) return;
+              var proto=HTMLInputElement.prototype;
+              var setter=Object.getOwnPropertyDescriptor(proto,'value').set;
+              try{ setter.call(inp,String(s[1])); }catch(e){ inp.value=String(s[1]); }
+              inp.dispatchEvent(new Event('input',{bubbles:true}));
+              inp.dispatchEvent(new Event('change',{bubbles:true}));
+              filled++;
+            });
+            if(filled===0) return JSON.stringify({sent:false,message:'مفيش جنود متاحين'});
+            var xi=form.querySelector('input[name="x"]');
+            var yi=form.querySelector('input[name="y"]');
+            if(xi&&yi){
+              var proto=HTMLInputElement.prototype;
+              var setter=Object.getOwnPropertyDescriptor(proto,'value').set;
+              try{ setter.call(xi,String(\(x))); }catch(e){ xi.value=String(\(x)); }
+              try{ setter.call(yi,String(\(y))); }catch(e){ yi.value=String(\(y)); }
+              xi.dispatchEvent(new Event('change',{bubbles:true}));
+              yi.dispatchEvent(new Event('change',{bubbles:true}));
+            }
+            var mode=form.querySelector(raid?'input[name="c"][value="4"]':'input[name="c"][value="3"]');
+            if(mode) mode.click();
+            var btn=form.querySelector('button[name="s"], button[type="submit"], input[type="image"][name="s1"], input[type="submit"]');
+            if(!btn) return JSON.stringify({sent:false,message:'لا يوجد زر إرسال'});
+            btn.click();
+            return JSON.stringify({sent:true,message:'الهجوم انطلق ⚔️'});
+          }catch(e){ return JSON.stringify({sent:false,message:e.message}); }
+        })();
+        """
+    }
+
+    // MARK: - قراءة تقارير التجسس (الموارد والجنود والجدار)
+
+    func readSpyReports(limit: Int = 8, completion: @escaping ([ScoutReport]) -> Void) {
+        runJSON(Self.reportsJS(limit: limit)) { obj in
+            var found: [ScoutReport] = []
+            for item in obj?["reports"] as? [[String: Any]] ?? [] {
+                let id = String(Self.int(item["id"]))
+                var rep = ScoutReport(
+                    id: id,
+                    subject: item["subject"] as? String ?? "",
+                    dateText: item["date"] as? String ?? ""
+                )
+                rep.wood = Self.int(item["wood"])
+                rep.clay = Self.int(item["clay"])
+                rep.iron = Self.int(item["iron"])
+                rep.crop = Self.int(item["crop"])
+                rep.wallLevel = Self.int(item["wall"]) - 1
+                rep.troopsText = item["troops"] as? String ?? ""
+                found.append(rep)
+            }
+            completion(found)
+        }
+    }
+
+    static func reportsJS(limit: Int) -> String {
+        """
+        (function(){
+          function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
+          var links=[];
+          document.querySelectorAll('a[href*="berichte.php?id="]').forEach(function(a){
+            if(links.length>=\(max(1, limit))) return;
+            var href=a.getAttribute('href')||'';
+            var m=href.match(/id=(\\d+)/);
+            var row=a.closest('tr,div');
+            var subject=(a.getAttribute('title')||(row?row.textContent:a.textContent)||'').replace(/\\s+/g,' ').trim();
+            if(m && subject.length>0) links.push({id:m[1], subject:subject.substring(0,60), href:href});
+          });
+          if(links.length===0) return Promise.resolve(JSON.stringify({reports:[]}));
+          return new Promise(function(resolve){
+            var reports=[]; var done=0; var finished=false;
+            function maybeFinish(){
+              if(!finished && done>=links.length){ finished=true; resolve(JSON.stringify({reports:reports})); }
+            }
+            setTimeout(maybeFinish, 8000);
+            links.forEach(function(l){
+              fetch(l.href, {credentials:'same-origin'})
+                .then(function(r){ return r.text(); })
+                .then(function(html){
+                  var doc=new DOMParser().parseFromString(html,'text/html');
+                  var rep={id:l.id, subject:l.subject, date:'', wood:0, clay:0, iron:0, crop:0, wall:0, troops:''};
+                  var resTds=doc.querySelectorAll('#resource td, td[class*="res"]');
+                  var vals=[];
+                  resTds.forEach(function(td){
+                    var n=pi(td.textContent);
+                    if(n>0 && vals.length<4) vals.push(n);
+                  });
+                  if(vals.length>=4){ rep.wood=vals[0]; rep.clay=vals[1]; rep.iron=vals[2]; rep.crop=vals[3]; }
+                  var body=doc.body?doc.body.innerText:'';
+                  var wm=body.match(/(?:الجدار|السور|wall)[^0-9]{0,15}([0-9]{1,2})/i);
+                  if(wm) rep.wall=parseInt(wm[1],10)+1;
+                  var dm=body.match(/[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{2,4}[^\\n]{0,8}/);
+                  if(dm) rep.date=dm[0];
+                  var troops=[];
+                  doc.querySelectorAll('img[class*="unit"], img[src*="/u/"]').forEach(function(img){
+                    var um=((img.getAttribute('class')||'')+' '+(img.getAttribute('src')||'')).match(/u(\\d{1,2})/);
+                    if(!um) return;
+                    var tr=img.closest('tr');
+                    if(!tr) return;
+                    var nums=(tr.textContent||'').match(/\\d+/g)||[];
+                    if(nums.length) troops.push('u'+um[1]+':'+nums[nums.length-1]);
+                  });
+                  rep.troops=troops.slice(0,12).join(' ');
+                  reports.push(rep);
+                  done++; maybeFinish();
+                })
+                .catch(function(){ done++; maybeFinish(); });
+            });
+          });
+        })();
+        """
+    }
+
+    // MARK: - Helpers
+
+    static func int(_ v: Any?) -> Int {
+        if let n = v as? Int { return n }
+        if let n = v as? NSNumber { return n.intValue }
+        if let s = v as? String { return Int(s.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)) ?? 0 }
+        return 0
+    }
+
+    /// أسماء عربية معروفة للوحدات (fallback لو الصفحة ما وفرتش اسم).
+    static func arabicUnitName(_ id: Int) -> String {
+        switch id {
+        case 1: return "الكتيبة الرومانية"
+        case 2: return "الحرس الإمبراطوري"
+        case 3: return "الجنود الإمبراطوريون"
+        case 4: return "جواسيس الرومان"
+        case 5: return "فرسان الإمبراطورية"
+        case 6: return "فرسان قيصر"
+        case 7: return "الكبش الروماني"
+        case 8: return "المقلاع الناري"
+        case 9: return "السيناتور"
+        case 10: return "المستوطن الروماني"
+        case 11: return "مضرب الخشب"
+        case 12: return "الرماح"
+        case 13: return "محارب الفأس"
+        case 14: return "الكشاف"
+        case 15: return "القيصر"
+        case 16: return "فرسان التوتون"
+        case 17: return "الكبش التوتوني"
+        case 18: return "المقلاع"
+        case 19: return "الرئيس"
+        case 20: return "المستوطن التوتوني"
+        case 21: return "الفرالكس"
+        case 22: return "المبارز"
+        case 23: return "المستكشف"
+        case 24: return "رعد التوتون"
+        case 25: return "فارس التنين"
+        case 26: return "رأس الهود"
+        case 27: return "الكبش الغالي"
+        case 28: return "المقلاع الحربي"
+        case 29: return "زعيم القرية"
+        case 30: return "المستوطن الغالي"
+        default: return "جندي"
+        }
+    }
+}

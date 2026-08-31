@@ -24,11 +24,23 @@ class WebViewModel: NSObject, ObservableObject {
     @Published var ironAmount: String = "0"
     @Published var wheatAmount: String = "0"
     @Published var wheatProduction: String = "0"
-    
+
+    // ===== الحالة الحقيقية من اللعبة (GameEngine) =====
+    let engine = GameEngine()
+    @Published var pageKind: String = ""
+    @Published var gameResources: GameResources?
+    @Published var homeTroops: [HomeUnit] = []
+    @Published var trainableUnits: [TrainableUnit] = []
+    @Published var mapVillages: [MapVillage] = []
+    @Published var spyReports: [ScoutReport] = []
+    @Published var gameLog: String = ""
+    @Published var isScanningMap = false
+    private var pendingSpyVillage: MapVillage?
+
     var webView: WKWebView?
     private var timer: Timer?
     private var cancellables = Set<AnyCancellable>()
-    
+
     let gameURL = "https://utatar.com/sign"
     
     override init() {
@@ -90,7 +102,8 @@ class WebViewModel: NSObject, ObservableObject {
     private func runAutomationCycle() {
         // Collect game state
         collectGameState()
-        
+        refreshGameData()
+
         // Run enabled automations
         if autoCollectResources {
             injectAutoCollect()
@@ -107,6 +120,152 @@ class WebViewModel: NSObject, ObservableObject {
         if resourceFullAlerts {
             checkResourcesFull()
         }
+    }
+
+    // MARK: - القراءة الحقيقية من اللعبة (GameEngine)
+
+    /// بيشتغل بعد كل تحميل صفحة وكل دورة أوتوماتك:
+    /// بيقرا الموارد والجنود والوحدات القابلة للتدريب من الـ DOM الحقيقي.
+    func refreshGameData() {
+        guard let urlString = webView?.url?.absoluteString else { return }
+        let kind = GameEngine.pageKind(from: urlString)
+        pageKind = kind
+
+        engine.readResources { [weak self] res in
+            guard let self = self, let res = res else { return }
+            DispatchQueue.main.async {
+                self.gameResources = res
+                self.woodAmount = "\(res.wood)"
+                self.clayAmount = "\(res.clay)"
+                self.ironAmount = "\(res.iron)"
+                self.wheatAmount = "\(res.crop)"
+                self.wheatProduction = "\(res.cropProd)"
+            }
+        }
+
+        // الجنود الموجودين في القرية (نقطة التجمع / صفحات القرية)
+        engine.readHomeTroops { [weak self] units in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                let oldCounts = Dictionary(self.homeTroops.map { ($0.id, $0.count) }, uniquingKeysWith: { a, _ in a })
+                self.homeTroops = units.map { u in
+                    var u = u
+                    if u.name.isEmpty { u.name = GameEngine.arabicUnitName(u.id) }
+                    if u.count == 0, let old = oldCounts[u.id] { u.count = old }
+                    return u
+                }
+            }
+        }
+
+        if kind == "training" {
+            engine.readTrainableUnits { [weak self] units in
+                guard let self = self else { return }
+                DispatchQueue.main.async {
+                    self.trainableUnits = units
+                }
+            }
+        } else {
+            if !trainableUnits.isEmpty {
+                trainableUnits = []
+            }
+        }
+
+        if kind == "map" {
+            scanMap()
+        }
+
+        if kind == "reports" {
+            engine.readSpyReports { [weak self] reps in
+                guard let self = self else { return }
+                DispatchQueue.main.async {
+                    self.spyReports = reps
+                }
+            }
+        }
+    }
+
+    /// مسح الخريطة الحقيقية وجمع القرى.
+    func scanMap() {
+        guard !isScanningMap else { return }
+        isScanningMap = true
+        engine.scanMapVillages { [weak self] villages in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if !villages.isEmpty {
+                    let old = Dictionary(self.mapVillages.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                    self.mapVillages = villages.map { v in
+                        if let prev = old[v.id], v.name.isEmpty { return prev }
+                        return v
+                    }
+                }
+                self.isScanningMap = false
+                if self.mapVillages.isEmpty {
+                    self.gameLog = "افتح صفحة الخريطة (karte.php) عشان أمسح القرى"
+                } else {
+                    self.gameLog = "لقينا \(self.mapVillages.count) قرية على الخريطة"
+                }
+            }
+        }
+    }
+
+    /// التجسس على قرية: نفتح صفحتها ← نكمل آلياً لإرسال جواسيس بعد التحميل.
+    func startSpy(_ village: MapVillage, scoutCount: Int = 3) {
+        guard let webView = webView else { return }
+        pendingSpyVillage = village
+        gameLog = "🕵️ جاري الذهاب إلى \(village.name)..."
+        if let url = URL(string: absoluteGameHref(village.href)) {
+            webView.load(URLRequest(url: url))
+        }
+    }
+
+    /// بيتم ناداه بعد ما أي صفحة تخلص تحميل — بيكمل خطوات التجسس الآلية.
+    func handlePageLoaded() {
+        refreshGameData()
+        advanceSpyIfNeeded()
+    }
+
+    private func advanceSpyIfNeeded() {
+        guard let target = pendingSpyVillage else { return }
+        switch pageKind {
+        case "villageInfo":
+            gameLog = "🕵️ فتحنا \(target.name)... بنروح لنقطة التجمع"
+            engine.clickSendTroopsFromVillageInfo { [weak self] clicked in
+                guard let self = self else { return }
+                DispatchQueue.main.async {
+                    if !clicked {
+                        self.pendingSpyVillage = nil
+                        self.gameLog = "مش لاقي زر إرسال جنود في صفحة القرية — جرب من الخريطة تاني"
+                    }
+                }
+            }
+        case "a2b":
+            engine.sendScouts(count: 3) { [weak self] ok, msg in
+                guard let self = self else { return }
+                DispatchQueue.main.async {
+                    self.pendingSpyVillage = nil
+                    self.gameLog = ok ? "✅ \(msg) — استنى التقرير في berichte.php" : "❌ \(msg)"
+                    if ok {
+                        self.sendNotification(title: "🕵️ تجسس", body: "الجواسيس في الطريق — التقرير هيظهر في التقارير")
+                    }
+                }
+            }
+        default:
+            break
+        }
+    }
+
+    /// يحوّل رابط نسبي (/dorf1.php) لرابط كامل على سيرفر اللعبة.
+    private func absoluteGameHref(_ href: String) -> String {
+        if href.hasPrefix("http") { return href }
+        if href.hasPrefix("/") { return "https://utatar.com" + href }
+        if href.isEmpty { return gameURL }
+        return "https://utatar.com/" + href
+    }
+
+    /// يفتح صفحة الخريطة عشان نقدر نمسح القرى.
+    func openMap() {
+        guard let url = URL(string: "https://utatar.com/karte.php") else { return }
+        webView?.load(URLRequest(url: url))
     }
     
     // MARK: - JavaScript Injection

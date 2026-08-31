@@ -18,6 +18,7 @@
 		A1000009 /* SpyAttackBot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000010 /* SpyAttackBot.swift */; };
 		A1000010 /* SpyAttackPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000011 /* SpyAttackPanelView.swift */; };
 		A1000012 /* Compatibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000012 /* Compatibility.swift */; };
+		A1000013 /* GameEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000013 /* GameEngine.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,6 +34,7 @@
 		A2000010 /* SpyAttackBot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpyAttackBot.swift; sourceTree = "<group>"; };
 		A2000011 /* SpyAttackPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpyAttackPanelView.swift; sourceTree = "<group>"; };
 		A2000012 /* Compatibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Compatibility.swift; sourceTree = "<group>"; };
+		A2000013 /* GameEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameEngine.swift; sourceTree = "<group>"; };
 		A3000001 /* UtatarApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = UtatarApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -68,6 +70,7 @@
 				A2000010 /* SpyAttackBot.swift */,
 				A2000011 /* SpyAttackPanelView.swift */,
 				A2000012 /* Compatibility.swift */,
+				A2000013 /* GameEngine.swift */,
 				A2000008 /* Assets.xcassets */,
 				A2000009 /* Info.plist */,
 			);
@@ -162,6 +165,7 @@
 				A1000009 /* SpyAttackBot.swift in Sources */,
 				A1000010 /* SpyAttackPanelView.swift in Sources */,
 				A1000012 /* Compatibility.swift in Sources */,
+				A1000013 /* GameEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
