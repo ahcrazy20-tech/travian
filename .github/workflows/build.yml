@@ -48,7 +48,7 @@ jobs:
             -target "${{ env.SCHEME_NAME }}" \
             -sdk iphoneos \
             -configuration Release \
-            -derivedDataPath build \
+            CONFIGURATION_BUILD_DIR="$PWD/build/Build/Products/Release-iphoneos" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
