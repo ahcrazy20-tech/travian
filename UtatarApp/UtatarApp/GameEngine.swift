@@ -172,30 +172,53 @@ final class GameEngine: NSObject {
         }
     }
 
-    /// جافاسكريبت قراءة الموارد من الخانات الحقيقية + fallback عام.
+    /// جافاسكريبت قراءة الموارد: كلاسيكيتع #l1..#l4 + مسح عام لأي صف أرقام في أعلى الصفحة.
     static let resourcesJS = """
     (function(){
       function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
-      function cell(sel){
-        var e=document.querySelector(sel);
-        if(!e) return null;
-        var t=(e.getAttribute('title')||'')+' '+(e.textContent||'');
-        var m=t.match(/([0-9][0-9,.]*)\\s*\\/\\s*([0-9][0-9,.]*)/);
-        if(m) return {cur:pi(m[1]),cap:pi(m[2])};
-        return {cur:pi(e.textContent),cap:0};
+      var vals=[0,0,0,0], caps=[0,0,0,0], got=0;
+      // 1) المحاولة الكلاسيكية: #l1..#l4 (صيغة الحالي/السعة في الـ title أو النص)
+      for(var i=0;i<4;i++){
+        var el=document.querySelector('#l'+(i+1)+', .l'+(i+1));
+        if(!el) continue;
+        var t=(el.getAttribute('title')||'')+' '+(el.textContent||'');
+        var m=t.match(/([0-9][0-9,.\\s]*)\\s*\\/\\s*([0-9][0-9,.\\s]*)/);
+        if(m){ vals[i]=pi(m[1]); caps[i]=pi(m[2]); }
+        else vals[i]=pi(el.textContent);
+        if(vals[i]>0) got++;
       }
-      var w=cell('#l1'), c=cell('#l2'), i=cell('#l3'), k=cell('#l4');
+      // 2) مسح عام: أول صف قرب أعلى الصفحة فيه 4 أرقام أو أكثر = شريط الموارد
+      if(got<4){
+        var groups={};
+        document.querySelectorAll('div,span,td,li,a,b,p').forEach(function(e){
+          var txt=(e.textContent||'').trim();
+          if(!txt || e.children.length>0) return;
+          if(!/^[0-9][0-9,.\\s]{2,}$/.test(txt)) return;
+          var n=pi(txt); if(n<=0) return;
+          var r=e.getBoundingClientRect();
+          if(r.width<=0 || r.top<0 || r.top>340) return;
+          var key=Math.round(r.top/14);
+          (groups[key]=groups[key]||[]).push(n);
+        });
+        var best=null;
+        for(var k in groups){
+          var g=groups[k];
+          if(g.length>=4 && (!best || g.length>best.length)) best=g;
+        }
+        if(best){
+          var uniq=[], seen={};
+          for(var j=0;j<best.length && uniq.length<4;j++){
+            if(!seen[best[j]]){ seen[best[j]]=1; uniq.push(best[j]); }
+          }
+          for(var i2=0;i2<4 && i2<uniq.length;i2++){ if(!(vals[i2]>0)) vals[i2]=uniq[i2]; }
+        }
+      }
       var prod=0;
       var l5=document.querySelector('#l5');
       if(l5) prod=pi(l5.textContent);
-      if(w===null&&c===null&&i===null&&k===null){
-        // fallback عام: أي أرقام بشكل cur/cap في شريط الموارد
-        var m=document.body?document.body.innerText.match(/([0-9]{2,})\\s*\\/\\s*([0-9]{2,})/):null;
-        if(m){ w={cur:pi(m[1]),cap:pi(m[2])}; }
-      }
       return JSON.stringify({resources:{
-        wood:w?w.cur:0, clay:c?c.cur:0, iron:i?i.cur:0, crop:k?k.cur:0,
-        woodCap:w?w.cap:0, clayCap:c?c.cap:0, ironCap:i?i.cap:0, cropCap:k?k.cap:0,
+        wood:vals[0], clay:vals[1], iron:vals[2], crop:vals[3],
+        woodCap:caps[0], clayCap:caps[1], ironCap:caps[2], cropCap:caps[3],
         cropProd:prod
       }});
     })();
@@ -287,52 +310,79 @@ final class GameEngine: NSObject {
     static let trainableJS = """
     (function(){
       function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
-      var form=document.querySelector('form[action*="build.php"]');
       var units=[];
-      if(form){
-        var inputs=form.querySelectorAll('input[name]');
-        inputs.forEach(function(inp){
+      function nameOf(row){
+        var name='', uid=0;
+        if(row){
+          var img=row.querySelector('img[class*="unit"], img[src*="/u/"], img[class*="u"]');
+          if(img){
+            var um=((img.getAttribute('class')||'')+' '+(img.getAttribute('src')||'')).match(/u(\\d{1,2})/);
+            if(um) uid=parseInt(um[1],10);
+            name=img.getAttribute('title')||img.getAttribute('alt')||'';
+          }
+          if(!name){
+            var a=row.querySelector('a');
+            if(a) name=(a.getAttribute('title')||a.textContent||'').trim();
+          }
+        }
+        return {name:name, uid:uid};
+      }
+      function maxOf(row, inputName, inp){
+        var m=parseInt(inp.getAttribute('max'),10);
+        if(isNaN(m)) m=parseInt(inp.getAttribute('data-max'),10);
+        if(!isNaN(m) && m>0) return m;
+        var mx=document.querySelector('a[href*="'+inputName+'.value="]');
+        if(mx){ var v=pi(mx.textContent); if(v>0) return v; }
+        if(row){
+          var mxt=row.textContent.match(/\\((\\d+)\\)/);
+          if(mxt) return parseInt(mxt[1],10);
+        }
+        return 0;
+      }
+      function costOf(row){
+        var cw=0,cc=0,ci=0,cp=0;
+        if(row){
+          var cells=row.querySelectorAll('img[src*="r1"], img[src*="r2"], img[src*="r3"], img[src*="r4"], img[class*="r1"], img[class*="r2"], img[class*="r3"], img[class*="r4"]');
+          var vals=[0,0,0,0];
+          cells.forEach(function(c,ix){
+            if(ix>3) return;
+            var h=c.parentElement;
+            var t=h?(h.textContent||''):'';
+            var nm=t.match(/\\d+/);
+            if(nm) vals[ix]=parseInt(nm[0],10);
+          });
+          cw=vals[0]; cc=vals[1]; ci=vals[2]; cp=vals[3];
+        }
+        return [cw,cc,ci,cp];
+      }
+      // أي فورم في أي صفحة فيها مدخلات t1..t9 = فورم تدريب
+      document.querySelectorAll('form').forEach(function(f){
+        f.querySelectorAll('input[name]').forEach(function(inp){
           var n=inp.getAttribute('name');
           if(!/^t[0-9]{1,2}$/.test(n)) return;
-          var row=inp.closest('tr')||inp.closest('div.table')||inp.closest('div')||inp.parentElement;
-          var name='';
-          var uid=0;
-          if(row){
-            var img=row.querySelector('img[class*="unit"], img[src*="/u/"], img[class*="u"]');
-            if(img){
-              var um=((img.getAttribute('class')||'')+' '+(img.getAttribute('src')||'')).match(/u(\\d{1,2})/);
-              if(um) uid=parseInt(um[1],10);
-              name=img.getAttribute('title')||img.getAttribute('alt')||'';
-            }
-            if(!name){
-              var a=row.querySelector('a');
-              if(a) name=(a.getAttribute('title')||a.textContent||'').trim();
-            }
-          }
-          var max=0;
-          var mx=document.querySelector('a[href*="'+n+'.value="]');
-          if(mx) max=pi(mx.textContent);
-          if(!max && row){
-            var mxt=row.textContent.match(/\\((\\d+)\\)/);
-            if(mxt) max=parseInt(mxt[1],10);
-          }
-          var cw=0,cc=0,ci=0,cp=0;
-          if(row){
-            var cells=row.querySelectorAll('img[src*="r1"], img[src*="r2"], img[src*="r3"], img[src*="r4"], img[class*="res r"], img[class*="r1"], img[class*="r2"], img[class*="r3"], img[class*="r4"]');
-            var vals=[0,0,0,0];
-            cells.forEach(function(ci2,ix){
-              if(ix>3) return;
-              var holder=ci2.parentElement;
-              var txt=holder?(holder.textContent||''):'';
-              var nm=txt.match(/\\d+/);
-              if(nm) vals[ix]=parseInt(nm[0],10);
-            });
-            cw=vals[0]; cc=vals[1]; ci=vals[2]; cp=vals[3];
-          }
-          units.push({input:n, uid:uid, name:name, max:max, costs:[cw,cc,ci,cp]});
+          for(var i=0;i<units.length;i++){ if(units[i].input===n) return; }
+          var row=inp.closest('tr')||inp.closest('div')||inp.parentElement;
+          var nm=nameOf(row);
+          var mx=maxOf(row,n,inp);
+          var co=costOf(row);
+          units.push({input:n, uid:nm.uid, name:nm.name, max:mx, costs:co});
+        });
+      });
+      // fallback: مدخلات بحد أقصى (max/data-max) حتى من غير فورم — بشرط إنها تبان وحدة عسكرية
+      if(units.length===0){
+        document.querySelectorAll('input[max], input[data-max]').forEach(function(inp){
+          var mx=pi(inp.getAttribute('max')||inp.getAttribute('data-max'));
+          if(mx<=0) return;
+          var n=inp.getAttribute('name')||inp.id||'';
+          if(!n) return;
+          var row=inp.closest('tr')||inp.closest('div')||inp.parentElement;
+          var nm=nameOf(row);
+          if(!nm.name && nm.uid===0) return;
+          var co=costOf(row);
+          units.push({input:n, uid:nm.uid, name:nm.name, max:mx, costs:co});
         });
       }
-      return JSON.stringify({isTrainPage: units.length>0, units:units});
+      return JSON.stringify({units:units});
     })();
     """
 
@@ -372,11 +422,20 @@ final class GameEngine: NSObject {
         (function(){
           try{
             var sels=\(arr);
-            var form=document.querySelector('form[action*="build.php"]');
-            if(!form) return JSON.stringify({ok:false,filled:0,message:'لا يوجد نموذج تدريب في هذه الصفحة'});
+            // دور على الفورم اللي فيه حقول التدريب نفسها (مهما كان الـ action)
+            var form=null;
+            var allForms=document.querySelectorAll('form');
+            for(var fi=0; fi<allForms.length && !form; fi++){
+              for(var j=0;j<sels.length;j++){
+                if(allForms[fi].querySelector('input[name="'+sels[j][0]+'"]')){ form=allForms[fi]; break; }
+              }
+            }
+            var scope=form||document;
+            var probe=scope.querySelector('input[name="'+sels[0][0]+'"]');
+            if(!probe) return JSON.stringify({ok:false,filled:0,message:'مفيش حقول تدريب في الصفحة دي — افتح الثكنات الأول'});
             var filled=0;
             sels.forEach(function(s){
-              var inp=form.querySelector('input[name="'+s[0]+'"]');
+              var inp=scope.querySelector('input[name="'+s[0]+'"]');
               if(!inp) return;
               var n=String(s[1]);
               var proto=HTMLInputElement.prototype;
@@ -387,7 +446,7 @@ final class GameEngine: NSObject {
               filled++;
             });
             if(filled===0) return JSON.stringify({ok:false,filled:0,message:'لم أجد حقول التدريب'});
-            var btn=form.querySelector('button[type="submit"], input[type="submit"], button[name="s"], input[type="image"]');
+            var btn=scope.querySelector('button[type="submit"], input[type="submit"], button[name="s"], input[type="image"]');
             if(!btn) return JSON.stringify({ok:false,filled:filled,message:'وجدت الحقول لكن لا يوجد زر تدريب'});
             btn.click();
             return JSON.stringify({ok:true,filled:filled,message:'بدأ التدريب'});
@@ -488,8 +547,13 @@ final class GameEngine: NSObject {
         (function(){
           try{
             function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
-            var form=document.querySelector('form[action*="a2b.php"], form[action*="a2b"]');
-            if(!form) return JSON.stringify({sent:false,message:'لا يوجد نموذج إرسال جنود (a2b)'});
+            var form=null;
+            document.querySelectorAll('form').forEach(function(f){
+              if(form) return;
+              if(f.querySelector('input[name^="t"]')) form=f;
+            });
+            if(!form) form=document.querySelector('form[action*="a2b"], form[action*="send"], form[action*="troop"]');
+            if(!form) return JSON.stringify({sent:false,message:'لا يوجد نموذج إرسال جنود'});
             var scoutInputs=[null,null,null];
             form.querySelectorAll('input[name]').forEach(function(inp){
               var n=inp.getAttribute('name');
@@ -547,7 +611,20 @@ final class GameEngine: NSObject {
         return """
         (function(){
           try{
-            var form=document.querySelector('form[action*="a2b.php"], form[action*="a2b"]');
+            var form=null;
+            document.querySelectorAll('form').forEach(function(f){
+              if(form) return;
+              var hx=f.querySelector('input[name="x"]');
+              var hy=f.querySelector('input[name="y"]');
+              var ht=f.querySelector('input[name^="t"]');
+              if(hx&&hy&&ht) form=f;
+            });
+            if(!form){
+              document.querySelectorAll('form').forEach(function(f){
+                if(form) return;
+                if(f.querySelector('input[name^="t"]')) form=f;
+              });
+            }
             if(!form) return JSON.stringify({sent:false,message:'افتح نقطة التجمع (القرية ← نقطة التجمع) الأول'});
             var sels=\(arr);
             var filled=0;
@@ -664,6 +741,74 @@ final class GameEngine: NSObject {
         })();
         """
     }
+
+    // MARK: - تشخيص الصفحة (يطلع تقرير الـ DOM الحقيقي)
+
+    func runDiagnostics(completion: @escaping (String) -> Void) {
+        runJSON(Self.diagnosticsJS) { obj in
+            let lines = obj?["lines"] as? [Any] ?? []
+            let text = lines.compactMap { $0 as? String }.joined(separator: "\n")
+            completion(text.isEmpty ? "مفيش نتيجة — اتأكد إن اللعبة مفتوحة" : text)
+        }
+    }
+
+    static let diagnosticsJS = """
+    (function(){
+      function brief(el){
+        var s='<'+el.tagName.toLowerCase();
+        if(el.id) s+='#'+el.id;
+        var c=String(el.className||'').trim();
+        if(c) s+='.'+c.split(/\\s+/).join('.');
+        return s+'>';
+      }
+      function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
+      var out=[];
+      out.push('URL: '+location.href);
+      out.push('TITLE: '+(document.title||''));
+      ['l1','l2','l3','l4','l5'].forEach(function(id){
+        var e=document.querySelector('#'+id);
+        out.push('#'+id+': '+(e?('TEXT="'+(e.textContent||'').trim().substring(0,30)+'" TITLE="'+(e.getAttribute('title')||'')+'"'):'-'));
+      });
+      out.push('-- ارقام فوق --');
+      var nums=[];
+      document.querySelectorAll('div,span,td,li,a,b,p').forEach(function(e){
+        if(nums.length>=10) return;
+        var t=(e.textContent||'').trim();
+        if(e.children.length===0 && /^[0-9][0-9,.\\s]{2,}$/.test(t)){
+          var r=e.getBoundingClientRect();
+          if(r.width>0 && r.top>=0 && r.top<=340) nums.push(brief(e)+' top='+Math.round(r.top)+' "'+t.substring(0,22)+'"');
+        }
+      });
+      nums.forEach(function(n){ out.push(n); });
+      out.push('-- فورمات --');
+      document.querySelectorAll('form').forEach(function(f,fi){
+        var parts=[];
+        f.querySelectorAll('input,button,select').forEach(function(i){
+          if(parts.length>=14) return;
+          parts.push((i.name||i.id||'?')+(i.type?'/'+i.type:''));
+        });
+        out.push('F'+fi+' act='+(f.getAttribute('action')||'-')+' :: '+parts.join(' | '));
+      });
+      out.push('-- صور وحدات --');
+      var u=[];
+      document.querySelectorAll('img').forEach(function(im){
+        if(u.length>=10) return;
+        var m=((im.getAttribute('class')||'')+' '+(im.getAttribute('src')||'')).match(/u(\\d{1,2})/);
+        if(m) u.push('u'+m[1]+' "'+((im.getAttribute('title')||im.getAttribute('alt')||'').substring(0,20))+'"');
+      });
+      u.forEach(function(x){ out.push(x); });
+      out.push('-- مدخلات بحد اقصى --');
+      document.querySelectorAll('input[max], input[data-max]').forEach(function(i){
+        if(out.length>60) return;
+        out.push('INP '+(i.name||i.id||'?')+' max='+(i.getAttribute('max')||i.getAttribute('data-max')));
+      });
+      ['a2b','karte','berichte','build.php'].forEach(function(k){
+        var n=document.querySelectorAll('a[href*="'+k+'"]').length;
+        out.push('روابط '+k+': '+n);
+      });
+      return JSON.stringify({lines:out});
+    })();
+    """
 
     // MARK: - Helpers
 

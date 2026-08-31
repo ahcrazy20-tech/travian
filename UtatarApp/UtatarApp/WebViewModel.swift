@@ -35,6 +35,7 @@ class WebViewModel: NSObject, ObservableObject {
     @Published var spyReports: [ScoutReport] = []
     @Published var gameLog: String = ""
     @Published var isScanningMap = false
+    @Published var diagnosticsOutput: String = ""
     private var pendingSpyVillage: MapVillage?
 
     var webView: WKWebView?
@@ -157,16 +158,11 @@ class WebViewModel: NSObject, ObservableObject {
             }
         }
 
-        if kind == "training" {
-            engine.readTrainableUnits { [weak self] units in
-                guard let self = self else { return }
-                DispatchQueue.main.async {
-                    self.trainableUnits = units
-                }
-            }
-        } else {
-            if !trainableUnits.isEmpty {
-                trainableUnits = []
+        // الوحدات القابلة للتدريب — نفحصها في أي صفحة (الثكنات ممكن يكون رابطها مختلف)
+        engine.readTrainableUnits { [weak self] units in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                self.trainableUnits = units
             }
         }
 
@@ -266,6 +262,16 @@ class WebViewModel: NSObject, ObservableObject {
     func openMap() {
         guard let url = URL(string: "https://utatar.com/karte.php") else { return }
         webView?.load(URLRequest(url: url))
+    }
+
+    /// تقرير تشخيص الـ DOM الحقيقي — نعرضه في التطبيق والمستخدم يشاركنه.
+    func runDiagnostics() {
+        diagnosticsOutput = "جاري الفحص..."
+        engine.runDiagnostics { [weak self] text in
+            DispatchQueue.main.async {
+                self?.diagnosticsOutput = text
+            }
+        }
     }
     
     // MARK: - JavaScript Injection

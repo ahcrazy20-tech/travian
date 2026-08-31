@@ -123,6 +123,9 @@ struct AutomationPanelView: View {
                         // ===== تقارير التجسس =====
                         SpyReportsCard(viewModel: viewModel)
 
+                        // ===== تشخيص =====
+                        DiagnosticsCard(viewModel: viewModel)
+
                         // Quick actions
                         HStack(spacing: 12) {
                             QuickActionButton(title: "🔄 تحديث", color: .blue) {
@@ -333,7 +336,7 @@ struct TrainingCard: View {
             }
 
             if viewModel.trainableUnits.isEmpty {
-                Text("لما تفتح الثكنات (build.php?id=19) هعرض أنواع الجنود والحد الأقصى والتكلفة")
+                Text("افتح الثكنات من داخل اللعبة (تدريب جنود) وأنا هكتشف أنواع الجنود والحد الأقصى والتكلفة لوحدي")
                     .font(.caption2)
                     .foregroundColor(.gray)
             } else {
@@ -546,6 +549,54 @@ struct SpyReportsCard: View {
                 ForEach(viewModel.spyReports) { report in
                     SpyReportRow(report: report)
                 }
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - كارت التشخيص
+
+struct DiagnosticsCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("🧰 تشخيص الصفحة الحقيقية")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                Button(action: { viewModel.runDiagnostics() }) {
+                    Text("افحص")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.8))
+                        .cornerRadius(6)
+                }
+            }
+
+            Text("لو الموارد أو التدريب مش ظاهرين، دوس افحص وابعتلي صورة النتيجة — بتاع دي بتوريني الـ DOM الحقيقي للعبة")
+                .font(.caption2)
+                .foregroundColor(.gray)
+
+            if !viewModel.diagnosticsOutput.isEmpty {
+                ScrollView {
+                    Text(viewModel.diagnosticsOutput)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.green)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(6)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 180)
+                .background(Color.black.opacity(0.6))
+                .cornerRadius(8)
             }
         }
         .padding()
