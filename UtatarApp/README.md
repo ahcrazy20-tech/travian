@@ -99,14 +99,60 @@
 
 ---
 
-## 🛠️ البناء من المصدر
+## 🏗️ البناء (GitHub Actions - من غير Mac)
+
+أي push لفرع `main` (أو `arena/*`) أو PR بيشغّل workflow كامل أوتوماتك:
+`.github/workflows/build.yml`
+
+| Job | بيعمل إيه |
+|-----|-----------|
+| 🔍 `checks` | فحص المشروع على Linux في ثواني (ملفات ناقصة، إعلانات مكرّرة، Info.plist، الأصول) |
+| 📱 `build-simulator` | بناء للمحاكي (Debug) + رفع `UtatarApp-simulator-app` artifact |
+| 📦 `build-ipa` | Archive للجهاز (Release) + ملف **IPA غير موقّع** تقدر توقّعه بـ Sideloadly/AltStore |
+| 🚀 `release` | بينزل Release على GitHub - بس لو شغّلت workflow يدوي وعلّمت `publish_release` |
+
+**النتايج**: روح تبويب **Actions** في المستودع → آخر run → قسم *Artifacts* → حمّل الـ IPA.
+
+لو البناء فشل، آخر step باسم **🧯 Show the exact compiler errors** بيطبع كل أسطر `error:`
+اللي Xcode قالها - ده أول مكان تدوّر فيه على السبب.
+
+### عايز IPA موقّع يركّب على طول؟
+ضيف secrets في المستودع (Settings → Secrets and variables → Actions):
+`P12_BASE64`, `P12_PASSWORD`, `TEAM_ID`, `PROVISIONING_PROFILE` — والـ workflow
+هيعمل الأرشيف بالتوقيع أوتوماتك.
+
+## 🛠️ البناء من المصدر (Mac + Xcode)
 
 ```bash
-# على Mac مع Xcode مثبت
-cd UtatarApp
-chmod +x build.sh
-./build.sh
+# من جذر المستودع أو من مجلد UtatarApp/
+./UtatarApp/build.sh check       # فحص المشروع بس (مش محتاج Xcode)
+./UtatarApp/build.sh             # بناء للمحاكي (Debug)
+./UtatarApp/build.sh run         # بناء + تشغيل على المحاكي
+./UtatarApp/build.sh device      # بناء Release للجهاز
+./UtatarApp/build.sh ipa         # بناء + تحضير ملف IPA
 ```
+
+الفحص ده هو نفس اللي CI بيبدأ بيه:
+
+```bash
+python3 scripts/check_project.py .
+```
+
+### ❌ أخطاء البناء اللي اتصلّحت (٢٠٢٦-٠٨-٣١)
+
+| # | المشكلة | التأثير | الحل |
+|---|---------|---------|------|
+| 1 | `sendAttackManually(to:)` معرّف مرتين: extension في `SpyAttackBot.swift` و extension تاني في `SpyAttackPanelView.swift` | `invalid redeclaration` - البناء بيرفض | اتشال الـ extension المكرر من `SpyAttackPanelView.swift` |
+| 2 | نفس الـ extension كان بينادي `sendAttack(to:)` وهو `private` في ملف تاني | `cannot find 'sendAttack' in scope` | اتحل مع #1 (اللي فاضل هو extension نفس الملف) |
+| 3 | `AppIcon.appiconset` من غير أي صورة | actool بيرفض/يطلع أيقونة فاضية | اتحطت أيقونة 1024×1024 حقيقية + `filename` في `Contents.json` |
+| 4 | `UILaunchStoryboardName = LaunchScreen` وملف الـ storyboard مش موجود | launch screen مكسور / فشل التحقق | اتشال المفتاح (Xcode بيولّد `UILaunchScreen` تلقائي) |
+| 5 | `UIRequiredDeviceCapabilities = armv7` | مفيش موبايل iOS 16+ فيه armv7 → فشل التحقق | اتشال المفتاح |
+| 6 | مفيش shared scheme في `.xcodeproj` | `xcodebuild -scheme` على CI بيحتاج scheme محفوظ | اتضاف `xcshareddata/xcschemes/UtatarApp.xcscheme` |
+| 7 | CI كان بيستخدم `runs-on: macos-14` + `setup-xcode 15.0` + `xcpretty` + `actions/cache@v3` + فلتر `paths:` | الـ build **مارضيش يبدأ** أصلاً، وكان بيفشل على أي صورة قديمة | `macos-latest` بدون تثبيت Xcode، بدون xcpretty، بدون cache، وبدون فلتر paths |
+| 8 | نسخة التطبيق مكتوبة باليد في `Info.plist` مع `MARKETING_VERSION` | تعارض في إصدار التطبيق | `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)` |
+
+كمان `bot.scanVillageDetails(...)` بقى بيحدّث القرى في القائمة فعلياً بعد الفحص
+(`SpyAttackBot.updateVillage(_:)`) بدل ما كان تعليق فاضي.
 
 ---
 

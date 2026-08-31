@@ -183,8 +183,8 @@ struct SpyAttackPanelView: View {
                     VillageRow(village: village) {
                         // Scan village details
                         bot.scanVillageDetails(village) { updated in
-                            if let updated = updated {
-                                // Update village in list
+                            if let updated {
+                                bot.updateVillage(updated)
                             }
                         }
                     }
@@ -721,13 +721,5 @@ struct FarmingSettingsView: View {
                 }
             }
         }
-    }
-}
-
-// MARK: - Extension for manual attack
-
-extension SpyAttackBot {
-    func sendAttackManually(to target: AttackTarget) {
-        sendAttack(to: target)
     }
 }

@@ -295,6 +295,16 @@ class SpyAttackBot: ObservableObject {
         updateAttackTargets()
     }
     
+    /// Replace an already discovered village with updated data (used after a detail scan).
+    func updateVillage(_ village: VillageInfo) {
+        if let index = discoveredVillages.firstIndex(where: { $0.id == village.id }) {
+            discoveredVillages[index] = village
+        } else {
+            discoveredVillages.append(village)
+        }
+        updateAttackTargets()
+    }
+    
     // MARK: - Target Analysis (تحليل الأهداف)
     
     private func updateAttackTargets() {
@@ -407,7 +417,6 @@ class SpyAttackBot: ObservableObject {
     
     private func sendAttack(to target: AttackTarget, troopCount: Int? = nil) {
         let troopsToSend = troopCount ?? target.recommendedTroops
-        let villageId = target.village.id
         
         let js = """
         (function() {

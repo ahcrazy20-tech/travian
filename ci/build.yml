@@ -1,0 +1,240 @@
+name: 🎮 Build UtatarApp iOS
+
+# ─────────────────────────────────────────────────────────────
+# Triggers are intentionally NOT filtered by `paths:` — a path filter is the
+# classic reason a push looks like "the build never started".
+# ─────────────────────────────────────────────────────────────
+on:
+  push:
+    branches:
+      - main
+      - 'arena/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: 'Build configuration'
+        type: choice
+        required: true
+        default: Debug
+        options: [Debug, Release]
+      publish_release:
+        description: 'Also publish a GitHub Release with the IPA'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_NAME: UtatarApp
+  SCHEME_NAME: UtatarApp
+  XCODE_PROJECT: UtatarApp/UtatarApp.xcodeproj
+  DERIVED_DATA: ${{ github.workspace }}/build/DerivedData
+  # Signing (optional). Add these in Settings → Secrets and variables → Actions.
+  P12_BASE64: ${{ secrets.P12_BASE64 }}
+  P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+  PROVISION_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE }}
+  TEAM_ID: ${{ secrets.TEAM_ID }}
+
+jobs:
+  # ==========================================================
+  # Job 1 — cheap, Linux-only sanity checks (no Mac minutes)
+  # ==========================================================
+  checks:
+    name: 🔍 Project sanity checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 🧪 Validate Xcode project, Info.plist, assets and Swift declarations
+        run: python3 scripts/check_project.py .
+
+  # ==========================================================
+  # Job 2 — build for the simulator (proves the code compiles)
+  # ==========================================================
+  build-simulator:
+    name: 📱 Build for iOS Simulator
+    runs-on: macos-latest          # macos-14 is deprecated; don't pin old images
+    needs: checks
+    timeout-minutes: 30
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Toolchain info
+        run: |
+          sw_vers
+          xcode-select -p
+          xcodebuild -version
+          echo "--- available schemes ---"
+          xcodebuild -list -project "$XCODE_PROJECT"
+
+      - name: 🏗️ Build (simulator, unsigned)
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$DERIVED_DATA")"
+          xcodebuild clean build \
+            -project "$XCODE_PROJECT" \
+            -scheme "$SCHEME_NAME" \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration "${{ inputs.configuration || 'Debug' }}" \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            2>&1 | tee build/xcodebuild-simulator.log
+
+      - name: 🧯 Show the exact compiler errors
+        if: failure()
+        run: |
+          echo "===== errors / failed commands ====="
+          grep -nE "error:|fatal error:|warning: .*deprecat|The following build commands failed" \
+            build/xcodebuild-simulator.log | head -80 || true
+          echo "===== last 40 lines ====="
+          tail -40 build/xcodebuild-simulator.log || true
+
+      - name: 📤 Upload simulator .app
+        uses: actions/upload-artifact@v4
+        with:
+          name: UtatarApp-simulator-app
+          path: build/DerivedData/Build/Products/${{ inputs.configuration || 'Debug' }}-iphonesimulator/${{ env.PROJECT_NAME }}.app
+          if-no-files-found: error
+          retention-days: 7
+
+  # ==========================================================
+  # Job 3 — archive for the device + package an IPA
+  # ==========================================================
+  build-ipa:
+    name: 📦 Archive + IPA (device)
+    runs-on: macos-latest
+    needs: [checks, build-simulator]
+    timeout-minutes: 45
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔎 Is code signing configured?
+        id: signing
+        run: |
+          if [ -n "${P12_BASE64:-}" ] && [ -n "${TEAM_ID:-}" ]; then
+            echo "enabled=true"  >> "$GITHUB_OUTPUT"
+            echo "✅ Signing secrets found → producing a signed IPA"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️  No signing secrets → producing an UNSIGNED .app/IPA (re-sign it with Sideloadly/AltStore)"
+          fi
+
+      - name: 🏗️ Archive (Release, device)
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$DERIVED_DATA")"
+          if [ "${{ steps.signing.outputs.enabled }}" = "true" ]; then
+            SIGNING_ARGS=(-allowProvisioningUpdates DEVELOPMENT_TEAM="$TEAM_ID")
+          else
+            SIGNING_ARGS=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="")
+          fi
+          xcodebuild clean archive \
+            -project "$XCODE_PROJECT" \
+            -scheme "$SCHEME_NAME" \
+            -destination 'generic/platform=iOS' \
+            -configuration Release \
+            -archivePath build/${{ env.PROJECT_NAME }}.xcarchive \
+            -derivedDataPath "$DERIVED_DATA" \
+            ENABLE_BITCODE=NO \
+            "${SIGNING_ARGS[@]}" \
+            2>&1 | tee build/xcodebuild-archive.log
+
+      - name: 🧯 Show the exact compiler errors
+        if: failure()
+        run: |
+          echo "===== errors / failed commands ====="
+          grep -nE "error:|fatal error:|The following build commands failed" \
+            build/xcodebuild-archive.log | head -80 || true
+          echo "===== last 40 lines ====="
+          tail -40 build/xcodebuild-archive.log || true
+
+      - name: 📦 Package IPA from the archive
+        run: |
+          set -euo pipefail
+          APP="$(find "build/${PROJECT_NAME}.xcarchive/Products/Applications" -maxdepth 1 -name '*.app' | head -n1)"
+          if [ -z "$APP" ]; then
+            echo "❌ no .app inside the archive" >&2
+            find "build/${PROJECT_NAME}.xcarchive" -maxdepth 3 | head -40 >&2
+            exit 1
+          fi
+          echo "Packaging: $APP"
+          python3 - "$APP" <<'PY'
+          import plistlib, pathlib, sys
+          info = pathlib.Path(sys.argv[1]) / "Info.plist"
+          data = plistlib.loads(info.read_bytes())
+          print("Bundle id :", data.get("CFBundleIdentifier"))
+          print("Version   :", data.get("CFBundleShortVersionString"), "build", data.get("CFBundleVersion"))
+          print("Min iOS   :", data.get("MinimumOSVersion"))
+          print("Signature :", "present" if (pathlib.Path(sys.argv[1]) / "_CodeSignature").exists() else "MISSING (unsigned)")
+          PY
+          rm -rf build/ipa && mkdir -p build/ipa/Payload
+          cp -R "$APP" build/ipa/Payload/
+          SUFFIX=""
+          [ -d "$APP/_CodeSignature" ] || SUFFIX="-unsigned"
+          (cd build/ipa && zip -qry "$GITHUB_WORKSPACE/build/${PROJECT_NAME}${SUFFIX}.ipa" Payload)
+          ls -lh build/*.ipa
+
+      - name: 📤 Upload IPA + xcarchive
+        uses: actions/upload-artifact@v4
+        with:
+          name: UtatarApp-ipa
+          path: |
+            build/*.ipa
+            build/*.xcarchive
+          if-no-files-found: error
+          retention-days: 30
+
+  # ==========================================================
+  # Job 4 — optional GitHub Release (only on main, only if asked)
+  # ==========================================================
+  release:
+    name: 🚀 Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build-ipa
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: 📥 Download IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: UtatarApp-ipa
+          path: release-files
+
+      - name: 🏷️ Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: UtatarApp build ${{ github.run_number }}
+          body: |
+            ## 🎮 UtatarApp build ${{ github.run_number }}
+            - 🕵️ Spy bot + ⚔️ attack bot, 🤖 auto-collect / build / train
+            - 📱 Requires iOS 16.4 or newer
+            ### Install
+            1. Download `UtatarApp-unsigned.ipa`
+            2. Sign + install with Sideloadly or AltStore (a free Apple ID is enough)
+            > ⚠️ The IPA is unsigned unless `P12_BASE64` / `TEAM_ID` secrets are configured in the repo.
+          files: release-files/**/*.ipa
+          fail_on_unmatched_files: false
+          draft: false
+          prerelease: true
