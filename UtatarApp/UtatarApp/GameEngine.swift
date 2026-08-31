@@ -352,7 +352,7 @@ final class GameEngine: NSObject {
             if(mx){ var v=pi(mx.textContent); if(v>0) max=v; }
           }
           if(!max&&row){
-            var mxt=row.textContent.match(/\((\\d+)\)/);
+            var mxt=row.textContent.match(/\\((\\d+)\\)/);
             if(mxt) max=parseInt(mxt[1],10);
           }
           var cw=0,cc=0,ci=0,cp=0;
