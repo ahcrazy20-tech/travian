@@ -1,242 +1,145 @@
-name: 🎮 Build UtatarApp iOS
+name: 🎮 Build UtatarApp iOS IPA
 
 on:
   push:
     branches: [ main, arena/* ]
     paths:
       - 'UtatarApp/**'
+      - '.github/workflows/build.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'UtatarApp/**'
   workflow_dispatch:  # Manual trigger
 
+permissions:
+  contents: write   # so job "release" can create/update a GitHub Release with the IPA
+
 env:
   PROJECT_NAME: UtatarApp
   SCHEME_NAME: UtatarApp
+  APP_NAME: UtatarApp
   XCODE_VERSION: '15.0'
 
 jobs:
   # ==========================================
-  # Job 1: Build for Simulator (Testing)
+  # Job 1: Build a real, installable IPA for TrollStore
   # ==========================================
-  build-simulator:
-    name: 📱 Build for Simulator
+  build-ipa:
+    name: 📦 Build TrollStore IPA
     runs-on: macos-14
-    timeout-minutes: 30
-    
+    timeout-minutes: 45
+
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
-      
+
       - name: 🔧 Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: ${{ env.XCODE_VERSION }}
-      
-      - name: 📦 Cache SPM dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/Library/Caches/org.swift.swiftpm
-            ~/Library/Developer/Xcode/DerivedData
-          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
-          restore-keys: |
-            ${{ runner.os }}-spm-
-      
-      - name: 🏗️ Build for Simulator
+
+      - name: 🏗️ Build app (device, no signing)
+        id: build
         run: |
-          xcodebuild clean build \
-            -project UtatarApp/${{ env.PROJECT_NAME }}.xcodeproj \
-            -scheme ${{ env.SCHEME_NAME }} \
-            -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0' \
-            -configuration Debug \
-            -derivedDataPath build/ \
+          set -euxo pipefail
+          xcodebuild \
+            -project "${{ env.PROJECT_NAME }}/${{ env.PROJECT_NAME }}.xcodeproj" \
+            -target "${{ env.SCHEME_NAME }}" \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            | xcpretty
-      
-      - name: ✅ Build Success
-        run: echo "✅ Simulator build succeeded!"
-      
-      - name: 📤 Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: UtatarApp-Simulator-Build
-          path: build/Build/Products/Debug-iphonesimulator/${{ env.PROJECT_NAME }}.app
-          retention-days: 7
+            ARCHS="arm64" \
+            ONLY_ACTIVE_ARCH=YES
 
-  # ==========================================
-  # Job 2: Build IPA (Release)
-  # ==========================================
-  build-ipa:
-    name: 📦 Build IPA
-    runs-on: macos-14
-    timeout-minutes: 45
-    needs: build-simulator
-    
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-      
-      - name: 🔧 Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: ${{ env.XCODE_VERSION }}
-      
-      - name: 📦 Cache SPM dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/Library/Caches/org.swift.swiftpm
-            ~/Library/Developer/Xcode/DerivedData
-          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
-          restore-keys: |
-            ${{ runner.os }}-spm-
-      
-      - name: 🔐 Setup Signing (Optional)
-        env:
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          TEAM_ID: ${{ secrets.TEAM_ID }}
+      - name: 📱 Package into .ipa (ad-hoc signed)
         run: |
-          # If you have signing certificates, add them here
-          # For now, we'll build without signing for testing
-          echo "Building without code signing for testing..."
-          echo "To enable signing, add these secrets to your repo:"
-          echo "  - P12_BASE64: Base64 encoded .p12 certificate"
-          echo "  - P12_PASSWORD: Certificate password"
-          echo "  - TEAM_ID: Apple Developer Team ID"
-          echo "  - PROVISIONING_PROFILE: Base64 encoded provisioning profile"
-      
-      - name: 🏗️ Build Archive
-        run: |
-          xcodebuild clean archive \
-            -project UtatarApp/${{ env.PROJECT_NAME }}.xcodeproj \
-            -scheme ${{ env.SCHEME_NAME }} \
-            -sdk iphoneos \
-            -configuration Release \
-            -derivedDataPath build/ \
-            -archivePath build/${{ env.PROJECT_NAME }}.xcarchive \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            | xcpretty
-      
-      - name: 📱 Create ExportOptions.plist
-        run: |
-          cat > build/ExportOptions.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>development</string>
-              <key>compileBitcode</key>
-              <false/>
-              <key>stripSwiftSymbols</key>
-              <true/>
-              <key>signingStyle</key>
-              <string>manual</string>
-          </dict>
-          </plist>
-          EOF
-      
-      - name: 📦 Export IPA
-        run: |
-          xcodebuild -exportArchive \
-            -archivePath build/${{ env.PROJECT_NAME }}.xcarchive \
-            -exportOptionsPlist build/ExportOptions.plist \
-            -exportPath build/ipa/ \
-            | xcpretty || true
-      
+          set -euo pipefail
+          APP_DIR="build/Build/Products/Release-iphoneos/${{ env.APP_NAME }}.app"
+          echo "APP_DIR=$APP_DIR"
+          ls -la "$APP_DIR"
+
+          if [ ! -d "$APP_DIR" ]; then
+            echo "::error::App bundle not found at $APP_DIR"
+            exit 1
+          fi
+
+          # Ad-hoc sign so it's valid for a device (TrollStore re-signs on install too).
+          /usr/bin/codesign --force --deep --sign - "$APP_DIR" \
+            || echo "::warning::Ad-hoc signing failed; packaging unsigned (TrollStore will sign on install)."
+
+          # Build the standard iOS Payload/ layout used by .ipa files.
+          rm -rf build/ipa
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_DIR" build/ipa/Payload/
+          ls -la build/ipa/Payload
+
+          # Create the .ipa (a zip containing a Payload/ folder at the root).
+          cd build/ipa
+          /usr/bin/zip -qry "../../${{ env.APP_NAME }}.ipa" Payload
+          cd ../..
+          ls -la "${{ env.APP_NAME }}.ipa"
+
+          # Smoke-test that it really is a valid .ipa (zip) with the app inside.
+          unzip -l "${{ env.APP_NAME }}.ipa" | head -20
+
       - name: 📤 Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: UtatarApp-IPA
-          path: |
-            build/ipa/*.ipa
-            build/${{ env.PROJECT_NAME }}.xcarchive
+          path: ${{ env.APP_NAME }}.ipa
+          if-no-files-found: error
           retention-days: 30
 
   # ==========================================
-  # Job 3: Lint & Code Quality
-  # ==========================================
-  lint:
-    name: 🔍 Code Quality
-    runs-on: macos-14
-    timeout-minutes: 15
-    
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-      
-      - name: 🔧 Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: ${{ env.XCODE_VERSION }}
-      
-      - name: 🔍 SwiftLint (if available)
-        run: |
-          if command -v swiftlint &> /dev/null; then
-            swiftlint lint --reporter github-actions-logging
-          else
-            echo "SwiftLint not installed, skipping..."
-          fi
-      
-      - name: 📊 Check Swift files
-        run: |
-          echo "📋 Swift files in project:"
-          find UtatarApp -name "*.swift" -type f | wc -l
-          echo ""
-          echo "📁 Project structure:"
-          find UtatarApp -type f | head -20
-
-  # ==========================================
-  # Job 4: Create Release (on main branch)
+  # Job 2: Create a GitHub Release with the IPA attached
   # ==========================================
   release:
     name: 🚀 Create Release
     runs-on: macos-14
-    needs: [build-ipa, lint]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    
+    needs: build-ipa
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
-      
+
       - name: 📥 Download IPA
         uses: actions/download-artifact@v4
         with:
           name: UtatarApp-IPA
           path: release/
-      
-      - name: 🏷️ Create Release
-        uses: softprops/action-gh-release@v1
+
+      - name: 🏷️ Create / Update Release
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
           name: UtatarApp v${{ github.run_number }}
           body: |
             ## 🎮 UtatarApp Release v${{ github.run_number }}
-            
-            ### ✨ Features:
-            - 🕵️ Spy Bot: Auto-scout villages
-            - ⚔️ Attack Bot: Auto-attack rich villages
-            - 🤖 Automation: Auto-collect, build, train
-            - 🏃 Auto-retreat when attacked
+
+            ### 📱 Install with TrollStore
+            1. Download **UtatarApp.ipa** (the file attached below).
+            2. Open it in **TrollStore**.
+            3. Tap **Install** and it appears on your Home Screen.
+
+            > ⚠️ This is an *ad-hoc signed* IPA built for real devices (arm64). No Apple
+            > developer certificate is needed — it's designed for TrollStore.
+
+            ### ✨ Features
+            - 🕵️ Spy Bot: auto-scout villages
+            - ⚔️ Attack Bot: auto-attack rich villages
+            - 🤖 Automation: auto-collect, build, train
             - 📊 Resource monitoring
-            
-            ### 📱 Installation:
-            1. Download the IPA file
-            2. Install using AltStore or Sideloadly
-            3. Open and enjoy!
-            
-            ### ⚠️ Notes:
-            - Requires iOS 16.4+
-            - Use responsibly
+
+            ### ✅ Requirements
+            - iOS 16.4+ (or TrollStore-compatible device)
+            - TrollStore installed
           files: |
-            release/**/*.ipa
+            release/*.ipa
           draft: false
           prerelease: false
         env:
