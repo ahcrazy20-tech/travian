@@ -102,6 +102,20 @@ struct SettingsView: View {
                                 .background(Color.green.opacity(0.8))
                                 .cornerRadius(8)
                         }
+                        
+                        // Show JS result on screen (important for debugging the DOM).
+                        if !viewModel.jsConsoleResult.isEmpty {
+                            ScrollView {
+                                Text(viewModel.jsConsoleResult)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundColor(.green)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(6)
+                            }
+                            .frame(maxHeight: 120)
+                            .background(Color.gray.opacity(0.2))
+                            .cornerRadius(8)
+                        }
                     }
                 }
                 .padding(.horizontal)
