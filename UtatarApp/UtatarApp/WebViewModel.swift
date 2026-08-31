@@ -258,10 +258,30 @@ class WebViewModel: NSObject, ObservableObject {
         return "https://utatar.com/" + href
     }
 
-    /// يفتح صفحة الخريطة عشان نقدر نمسح القرى.
+    /// يفتح صفحة الخريطة — بدل ما نفترض الرابط، ندور على لينك الخريطة الحقيقي في الصفحة.
     func openMap() {
-        guard let url = URL(string: "https://utatar.com/karte.php") else { return }
-        webView?.load(URLRequest(url: url))
+        let js = """
+        (function(){
+          var a=document.querySelector('a[href*="karte"], a[href*="map"], [title*="خريطة"]');
+          if(a && a.getAttribute('href')) return a.getAttribute('href');
+          return '';
+        })();
+        """
+        webView?.evaluateJavaScript(js) { [weak self] res, _ in
+            var target = "https://utatar.com/karte.php"
+            if let href = res as? String, !href.isEmpty {
+                if href.hasPrefix("http") {
+                    target = href
+                } else if href.hasPrefix("/") {
+                    target = "https://utatar.com" + href
+                } else {
+                    target = "https://utatar.com/" + href
+                }
+            }
+            if let url = URL(string: target) {
+                self?.webView?.load(URLRequest(url: url))
+            }
+        }
     }
 
     /// تقرير تشخيص الـ DOM الحقيقي — نعرضه في التطبيق والمستخدم يشاركنه.
@@ -391,6 +411,12 @@ class WebViewModel: NSObject, ObservableObject {
     }
     
     func injectAutoTrain() {
+        // لو عارفين الوحدات القابلة للتدريب من الفحص الحقيقي — درّب الأقصى مباشرة
+        if !trainableUnits.isEmpty {
+            let units = trainableUnits
+            engine.trainAllMax(units) { _ in }
+            return
+        }
         let js = """
         (function() {
             try {

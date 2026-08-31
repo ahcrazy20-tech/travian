@@ -103,6 +103,7 @@ final class GameEngine: NSObject {
         if path.hasPrefix("dorf2") { return "dorf2" }
         if path.hasPrefix("a2b") { return "a2b" }
         if path.hasPrefix("karte") { return q.contains("d=") ? "villageInfo" : "map" }
+        if path.hasPrefix("map") { return "map" }
         if path.hasPrefix("build") {
             if q.range(of: #"id=(19|20|21|25|26|29|30)"#, options: .regularExpression) != nil {
                 return "training"
@@ -293,6 +294,10 @@ final class GameEngine: NSObject {
                 let input = item["input"] as? String ?? ""
                 guard !input.isEmpty else { continue }
                 var u = TrainableUnit(id: input, name: item["name"] as? String ?? "")
+                let uid = Self.int(item["uid"])
+                if u.name.isEmpty && uid > 0 {
+                    u.name = GameEngine.arabicUnitName(uid)
+                }
                 u.max = Self.int(item["max"])
                 let costs = item["costs"] as? [Any] ?? []
                 if costs.count >= 4 {
@@ -310,78 +315,62 @@ final class GameEngine: NSObject {
     static let trainableJS = """
     (function(){
       function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
-      var units=[];
-      function nameOf(row){
-        var name='', uid=0;
-        if(row){
-          var img=row.querySelector('img[class*="unit"], img[src*="/u/"], img[class*="u"]');
-          if(img){
-            var um=((img.getAttribute('class')||'')+' '+(img.getAttribute('src')||'')).match(/u(\\d{1,2})/);
-            if(um) uid=parseInt(um[1],10);
-            name=img.getAttribute('title')||img.getAttribute('alt')||'';
-          }
-          if(!name){
-            var a=row.querySelector('a');
-            if(a) name=(a.getAttribute('title')||a.textContent||'').trim();
-          }
-        }
-        return {name:name, uid:uid};
-      }
-      function maxOf(row, inputName, inp){
-        var m=parseInt(inp.getAttribute('max'),10);
-        if(isNaN(m)) m=parseInt(inp.getAttribute('data-max'),10);
-        if(!isNaN(m) && m>0) return m;
-        var mx=document.querySelector('a[href*="'+inputName+'.value="]');
-        if(mx){ var v=pi(mx.textContent); if(v>0) return v; }
-        if(row){
-          var mxt=row.textContent.match(/\\((\\d+)\\)/);
-          if(mxt) return parseInt(mxt[1],10);
-        }
+      function unitIdFromName(n){
+        var m=String(n).match(/^t(?:f)?\\[(\\d{1,2})\\]$/i);
+        if(m) return parseInt(m[1],10);
+        var m2=String(n).match(/^t(\\d{1,2})$/i);
+        if(m2) return parseInt(m2[1],10);
         return 0;
       }
-      function costOf(row){
-        var cw=0,cc=0,ci=0,cp=0;
-        if(row){
-          var cells=row.querySelectorAll('img[src*="r1"], img[src*="r2"], img[src*="r3"], img[src*="r4"], img[class*="r1"], img[class*="r2"], img[class*="r3"], img[class*="r4"]');
-          var vals=[0,0,0,0];
-          cells.forEach(function(c,ix){
-            if(ix>3) return;
-            var h=c.parentElement;
-            var t=h?(h.textContent||''):'';
-            var nm=t.match(/\\d+/);
-            if(nm) vals[ix]=parseInt(nm[0],10);
-          });
-          cw=vals[0]; cc=vals[1]; ci=vals[2]; cp=vals[3];
-        }
-        return [cw,cc,ci,cp];
-      }
-      // أي فورم في أي صفحة فيها مدخلات t1..t9 = فورم تدريب
+      var units=[];
       document.querySelectorAll('form').forEach(function(f){
+        // استبعد فورمات إرسال الهجمات (فيها إحداثيات x/y) عشان ما نغلطش نبعث جيش
+        if(f.querySelector('input[name="x"]') && f.querySelector('input[name="y"]')) return;
         f.querySelectorAll('input[name]').forEach(function(inp){
           var n=inp.getAttribute('name');
-          if(!/^t[0-9]{1,2}$/.test(n)) return;
+          var uid=unitIdFromName(n);
+          if(uid<=0) return;
           for(var i=0;i<units.length;i++){ if(units[i].input===n) return; }
           var row=inp.closest('tr')||inp.closest('div')||inp.parentElement;
-          var nm=nameOf(row);
-          var mx=maxOf(row,n,inp);
-          var co=costOf(row);
-          units.push({input:n, uid:nm.uid, name:nm.name, max:mx, costs:co});
+          var name='';
+          if(row){
+            var img=row.querySelector('img[class*="unit"], img[src*="/u/"], img[src*="un/u/"], img[src*="img/u/"]');
+            if(img){
+              name=img.getAttribute('title')||img.getAttribute('alt')||'';
+            }
+            if(!name){
+              var a=row.querySelector('a');
+              if(a) name=(a.getAttribute('title')||a.textContent||'').trim();
+            }
+          }
+          var max=0;
+          var mm=parseInt(inp.getAttribute('max'),10);
+          if(isNaN(mm)) mm=parseInt(inp.getAttribute('data-max'),10);
+          if(!isNaN(mm)&&mm>0) max=mm;
+          if(!max){
+            var mx=document.querySelector('a[href*="'+n+'.value="]');
+            if(mx){ var v=pi(mx.textContent); if(v>0) max=v; }
+          }
+          if(!max&&row){
+            var mxt=row.textContent.match(/\((\\d+)\)/);
+            if(mxt) max=parseInt(mxt[1],10);
+          }
+          var cw=0,cc=0,ci=0,cp=0;
+          if(row){
+            var cells=row.querySelectorAll('img[src*="r1"], img[src*="r2"], img[src*="r3"], img[src*="r4"], img[class*="r1"], img[class*="r2"], img[class*="r3"], img[class*="r4"]');
+            var vals=[0,0,0,0];
+            cells.forEach(function(c,ix){
+              if(ix>3) return;
+              var h=c.parentElement;
+              var t=h?(h.textContent||''):'';
+              var nm=t.match(/\\d+/);
+              if(nm) vals[ix]=parseInt(nm[0],10);
+            });
+            cw=vals[0]; cc=vals[1]; ci=vals[2]; cp=vals[3];
+          }
+          units.push({input:n, uid:uid, name:name, max:max, costs:[cw,cc,ci,cp]});
         });
       });
-      // fallback: مدخلات بحد أقصى (max/data-max) حتى من غير فورم — بشرط إنها تبان وحدة عسكرية
-      if(units.length===0){
-        document.querySelectorAll('input[max], input[data-max]').forEach(function(inp){
-          var mx=pi(inp.getAttribute('max')||inp.getAttribute('data-max'));
-          if(mx<=0) return;
-          var n=inp.getAttribute('name')||inp.id||'';
-          if(!n) return;
-          var row=inp.closest('tr')||inp.closest('div')||inp.parentElement;
-          var nm=nameOf(row);
-          if(!nm.name && nm.uid===0) return;
-          var co=costOf(row);
-          units.push({input:n, uid:nm.uid, name:nm.name, max:mx, costs:co});
-        });
-      }
       return JSON.stringify({units:units});
     })();
     """
@@ -434,10 +423,17 @@ final class GameEngine: NSObject {
             var probe=scope.querySelector('input[name="'+sels[0][0]+'"]');
             if(!probe) return JSON.stringify({ok:false,filled:0,message:'مفيش حقول تدريب في الصفحة دي — افتح الثكنات الأول'});
             var filled=0;
+            function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
             sels.forEach(function(s){
               var inp=scope.querySelector('input[name="'+s[0]+'"]');
               if(!inp) return;
-              var n=String(s[1]);
+              var v=s[1];
+              if(!(v>0)){
+                var mx=document.querySelector('a[href*="'+s[0]+'.value="]');
+                var mv=mx?pi(mx.textContent):0;
+                v=(mv>0)?mv:1;
+              }
+              var n=String(v);
               var proto=HTMLInputElement.prototype;
               var setter=Object.getOwnPropertyDescriptor(proto,'value').set;
               try{ setter.call(inp,n); }catch(e){ inp.value=n; }
@@ -498,16 +494,13 @@ final class GameEngine: NSObject {
         if(name.length>40) name=name.substring(0,40);
         out.push({vid:dm[1], name:name, x:xy?parseInt(xy[1],10):0, y:xy?parseInt(xy[2],10):0, player:player, population:pop, href:href});
       }
-      document.querySelectorAll('area[href*="karte.php?d="]').forEach(function(a){
-        push(a.getAttribute('href')||'', a.getAttribute('title')||'');
-      });
-      document.querySelectorAll('#map_content div[onclick*="karte.php?d="]').forEach(function(d){
-        var oc=d.getAttribute('onclick')||'';
-        var m=oc.match(/karte\\.php\\?d=\\d+[^'"]*/);
-        if(m) push(m[0], d.getAttribute('title')||(d.textContent||'').trim());
-      });
-      document.querySelectorAll('a[href*="karte.php?d="]').forEach(function(a){
+      document.querySelectorAll('area[href*="karte"], a[href*="karte"]').forEach(function(a){
         push(a.getAttribute('href')||'', a.getAttribute('title')||(a.textContent||'').trim());
+      });
+      document.querySelectorAll('#map_content div[onclick*="d="]').forEach(function(d){
+        var oc=d.getAttribute('onclick')||'';
+        var m=oc.match(/d=\\d+/);
+        if(m) push('karte?'+m[0], d.getAttribute('title')||(d.textContent||'').trim());
       });
       return JSON.stringify(out);
     })();
@@ -525,7 +518,10 @@ final class GameEngine: NSObject {
     static let villageInfoSpyJS = """
     (function(){
       try{
-        var links=document.querySelectorAll('a[href^="a2b.php?d="], a[href*="a2b.php?d="]');
+        var links=document.querySelectorAll('a[href*="a2b"][href*="d="]');
+        if(links.length===0){
+          links=document.querySelectorAll('a[href*="a2b"]');
+        }
         if(links.length===0) return JSON.stringify({clicked:false});
         links[0].click();
         return JSON.stringify({clicked:true});
@@ -547,29 +543,25 @@ final class GameEngine: NSObject {
         (function(){
           try{
             function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
+            function unitIdFromName(n){
+              var m=String(n).match(/^t(?:f)?\\[(\\d{1,2})\\]$/i);
+              if(m) return parseInt(m[1],10);
+              var m2=String(n).match(/^t(\\d{1,2})$/i);
+              if(m2) return parseInt(m2[1],10);
+              return 0;
+            }
             var form=null;
             document.querySelectorAll('form').forEach(function(f){
-              if(form) return;
-              if(f.querySelector('input[name^="t"]')) form=f;
+              if(!form && f.querySelector('input[name^="t"]')) form=f;
             });
             if(!form) form=document.querySelector('form[action*="a2b"], form[action*="send"], form[action*="troop"]');
-            if(!form) return JSON.stringify({sent:false,message:'لا يوجد نموذج إرسال جنود'});
-            var scoutInputs=[null,null,null];
+            if(!form) return JSON.stringify({sent:false,message:'افتح صفحة إرسال الجنود (نقطة التجمع) الأول'});
+            var scout=null;
             form.querySelectorAll('input[name]').forEach(function(inp){
-              var n=inp.getAttribute('name');
-              if(!/^t[0-9]{1,2}$/.test(n)) return;
-              var row=inp.closest('tr')||inp.closest('div');
-              var img=row?row.querySelector('img[class*="unit"], img[src*="/u/"], img[class*="u"]'):null;
-              if(!img) return;
-              var um=((img.getAttribute('class')||'')+' '+(img.getAttribute('src')||'')).match(/u(\\d{1,2})/);
-              if(!um) return;
-              var uid=parseInt(um[1],10);
-              if(uid===4) scoutInputs[0]=inp;
-              if(uid===14) scoutInputs[1]=inp;
-              if(uid===23) scoutInputs[2]=inp;
+              var uid=unitIdFromName(inp.getAttribute('name'));
+              if((uid===14||uid===4||uid===23) && !scout) scout=inp;
             });
-            var scout=scoutInputs[0]||scoutInputs[1]||scoutInputs[2];
-            if(!scout) return JSON.stringify({sent:false,message:'لم أجد جندي تجسس (تحتاج كشاف/مستكشف)'});
+            if(!scout) return JSON.stringify({sent:false,message:'مفيش كشاف/مستكشف في صفحة الإرسال دي'});
             var proto=HTMLInputElement.prototype;
             var setter=Object.getOwnPropertyDescriptor(proto,'value').set;
             var maxv=0;
@@ -581,7 +573,7 @@ final class GameEngine: NSObject {
             scout.dispatchEvent(new Event('change',{bubbles:true}));
             var raid=form.querySelector('input[name="c"][value="4"], input[value="4"]');
             if(raid) raid.click();
-            var btn=form.querySelector('button[name="s"], button[type="submit"], input[type="image"][name="s1"], input[type="submit"]');
+            var btn=form.querySelector('button[type="submit"], button[name="s"], input[type="submit"], input[type="image"]');
             if(!btn) return JSON.stringify({sent:false,message:'لا يوجد زر إرسال'});
             btn.click();
             return JSON.stringify({sent:true,message:'انطلق \(count) من الجواسيس 🕵️'});
@@ -832,9 +824,9 @@ final class GameEngine: NSObject {
         case 8: return "المقلاع الناري"
         case 9: return "السيناتور"
         case 10: return "المستوطن الروماني"
-        case 11: return "مضرب الخشب"
-        case 12: return "الرماح"
-        case 13: return "محارب الفأس"
+        case 11: return "مقاتل بهراوة"
+        case 12: return "مقاتل برمح"
+        case 13: return "مقاتل بفأس"
         case 14: return "الكشاف"
         case 15: return "القيصر"
         case 16: return "فرسان التوتون"
