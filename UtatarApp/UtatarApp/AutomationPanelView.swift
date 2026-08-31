@@ -336,7 +336,8 @@ struct AutoTrainRow: View {
     }
 }
 
-// One discovered troop row: icon, name, max, and a stepper for the count.
+// One discovered troop row: icon, name, max, and +/- buttons for the count.
+// Uses only iOS 15-safe SwiftUI (no Stepper/labelsHidden).
 struct TroopRowView: View {
     @Binding var troop: TroopType
 
@@ -357,13 +358,30 @@ struct TroopRowView: View {
 
             Spacer()
 
-            Stepper(value: $troop.selectedCount, in: 0...max(1, troop.max), step: 1) {
-                Text("\(troop.selectedCount)")
-                    .font(.caption)
-                    .foregroundColor(.white)
-                    .frame(width: 40)
+            // Decrement
+            Button(action: {
+                if troop.selectedCount > 0 { troop.selectedCount -= 1 }
+            }) {
+                Image(systemName: "minus.circle.fill")
+                    .font(.title3)
+                    .foregroundColor(.orange)
             }
-            .labelsHidden()
+
+            Text("\(troop.selectedCount)")
+                .font(.subheadline)
+                .foregroundColor(.white)
+                .frame(width: 40)
+
+            // Increment
+            Button(action: {
+                if troop.max == 0 || troop.selectedCount < troop.max {
+                    troop.selectedCount += 1
+                }
+            }) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title3)
+                    .foregroundColor(.green)
+            }
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
