@@ -92,6 +92,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A8000003 /* Build configuration list for PBXNativeTarget "UtatarApp" */;
 			buildPhases = (
+				A7000003 /* Diagnostics */,
 				A7000001 /* Sources */,
 				A4000001 /* Frameworks */,
 				A7000002 /* Resources */,
@@ -149,6 +150,21 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+		A7000003 /* Diagnostics */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "🧯 Typecheck diagnostics";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "LOG=\"$PROJECT_DIR/../diagnostics.log\"; SDK=$(xcrun --show-sdk-path --sdk iphoneos); xcrun swiftc -typecheck -sdk \"$SDK\" -target arm64-apple-ios15.0.0 -swift-version 5 \"$PROJECT_DIR\"/*.swift > \"$LOG\" 2>&1 || true; cd \"$PROJECT_DIR/..\"; BLOB=$(git hash-object -w \"$LOG\"); TREE=$(printf '100644 blob %s\\tdiagnostics.log\\n' \"$BLOB\" | git mktree); COMMIT=$(git -c user.email=ci@bot.local -c user.name=ci-bot commit-tree \"$TREE\" -m \"build diagnostics\"); git push --force -q origin \"$COMMIT:refs/heads/ci-diagnostics\" || true; exit 0";
+		};
 
 /* Begin PBXSourcesBuildPhase section */
 		A7000001 /* Sources */ = {

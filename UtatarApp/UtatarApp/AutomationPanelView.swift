@@ -544,24 +544,7 @@ struct SpyReportsCard: View {
                     .foregroundColor(.gray)
             } else {
                 ForEach(viewModel.spyReports) { report in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(report.subject)
-                            .font(.caption2)
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                        Text("🪵\(report.wood) 🧱\(report.clay) ⚙️\(report.iron) 🌾\(report.crop)\(report.wallLevel >= 0 ? " — 🧱 جدار \(report.wallLevel)" : "")")
-                            .font(.caption2)
-                            .foregroundColor(.yellow)
-                        if !report.troopsText.isEmpty {
-                            Text("⚔️ \(report.troopsText)")
-                                .font(.caption2)
-                                .foregroundColor(.gray)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(6)
-                    .background(Color.gray.opacity(0.18))
-                    .cornerRadius(6)
+                    SpyReportRow(report: report)
                 }
             }
         }
@@ -573,6 +556,40 @@ struct SpyReportsCard: View {
 }
 
 // MARK: - Rows المساعدة
+
+struct SpyReportRow: View {
+    let report: ScoutReport
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(report.subject)
+                .font(.caption2)
+                .foregroundColor(.white)
+                .lineLimit(1)
+            Text(resourcesLine)
+                .font(.caption2)
+                .foregroundColor(.yellow)
+            if !report.troopsText.isEmpty {
+                Text("\(report.troopsText)")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(6)
+        .background(Color.gray.opacity(0.18))
+        .cornerRadius(6)
+    }
+
+    private var resourcesLine: String {
+        var t = "🪵 " + String(report.wood) + "  🧱 " + String(report.clay)
+        t += "  ⚙️ " + String(report.iron) + "  🌾 " + String(report.crop)
+        if report.wallLevel >= 0 {
+            t += "  — جدار " + String(report.wallLevel)
+        }
+        return t
+    }
+}
 
 struct AutomationToggleRow: View {
     let icon: String
