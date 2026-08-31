@@ -36,7 +36,20 @@ class WebViewModel: NSObject, ObservableObject {
     @Published var gameLog: String = ""
     @Published var isScanningMap = false
     @Published var diagnosticsOutput: String = ""
+    @Published var activityLog: [String] = []
     private var pendingSpyVillage: MapVillage?
+
+    /// سجل كل حركة بيعملها المحرك — بيظهر في البانل وبيساعدنا نعرف مين اللي فشل وليه.
+    func logActivity(_ text: String) {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        DispatchQueue.main.async {
+            self.activityLog.insert("[\(f.string(from: Date()))] \(text)", at: 0)
+            if self.activityLog.count > 40 {
+                self.activityLog.removeLast(self.activityLog.count - 40)
+            }
+        }
+    }
 
     var webView: WKWebView?
     private var timer: Timer?
@@ -104,6 +117,7 @@ class WebViewModel: NSObject, ObservableObject {
         // Collect game state
         collectGameState()
         refreshGameData()
+        advanceSpyIfNeeded()
 
         // Run enabled automations
         if autoCollectResources {
@@ -162,6 +176,11 @@ class WebViewModel: NSObject, ObservableObject {
         engine.readTrainableUnits { [weak self] units in
             guard let self = self else { return }
             DispatchQueue.main.async {
+                if units.count != self.trainableUnits.count {
+                    self.logActivity(units.isEmpty
+                        ? "مفيش وحدات تدريب في الصفحة (\(kind))"
+                        : "لقيت \(units.count) وحدة قابلة للتدريب في \(kind)")
+                }
                 self.trainableUnits = units
             }
         }
@@ -196,9 +215,11 @@ class WebViewModel: NSObject, ObservableObject {
                 }
                 self.isScanningMap = false
                 if self.mapVillages.isEmpty {
-                    self.gameLog = "افتح صفحة الخريطة (karte.php) عشان أمسح القرى"
+                    self.gameLog = "افتح صفحة الخريطة عشان أمسح القرى"
+                    self.logActivity("🗺️ مفيش قرى — الصفحة دي مش الخريطة أو شكلها مختلف")
                 } else {
                     self.gameLog = "لقينا \(self.mapVillages.count) قرية على الخريطة"
+                    self.logActivity("🗺️ لقينا \(self.mapVillages.count) قرية")
                 }
             }
         }
@@ -208,9 +229,36 @@ class WebViewModel: NSObject, ObservableObject {
     func startSpy(_ village: MapVillage, scoutCount: Int = 3) {
         guard let webView = webView else { return }
         pendingSpyVillage = village
-        gameLog = "🕵️ جاري الذهاب إلى \(village.name)..."
+        logActivity("🕵️ جاري الذهاب إلى \(village.name) (\(village.x)|\(village.y))...")
+        if village.href.isEmpty {
+            pendingSpyVillage = nil
+            logActivity("❌ القرية دي مالهاش رابط — افتحها من الخريطة واضغط «جسّس من الصفحة الحالية»")
+            return
+        }
         if let url = URL(string: absoluteGameHref(village.href)) {
             webView.load(URLRequest(url: url))
+        }
+        // لو الصفحة ما فتحتش (رابط ناقص مثلاً) نلغي المهمة بعد 8 ثواني
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self = self, self.pendingSpyVillage != nil else { return }
+            self.pendingSpyVillage = nil
+            self.logActivity("⏱️ صفحة القرية ما ردّت — افتح القرية يدوياً من الخريطة واضغط «جسّس من الصفحة الحالية»")
+        }
+    }
+
+    /// تجسس على القرية اللي انت واقف عليها الآن (من غير ما نتنقل).
+    func spyFromCurrentPage() {
+        logActivity("🕵️ بدور على زر إرسال الجنود في الصفحة الحالية...")
+        engine.clickSendTroopsFromVillageInfo { [weak self] clicked in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if clicked {
+                    self.pendingSpyVillage = MapVillage(id: "manual", name: "القرية الحالية", x: 0, y: 0)
+                    self.logActivity("✅ لقيت زر الإرسال وضغطته — لو الصفحة اتغيرت هبعت الكشاف أوتوماتك")
+                } else {
+                    self.logActivity("❌ مفيش زر إرسال جنود في الصفحة دي — افتح القرية أو نقطة التجمع الأول")
+                }
+            }
         }
     }
 
@@ -224,13 +272,13 @@ class WebViewModel: NSObject, ObservableObject {
         guard let target = pendingSpyVillage else { return }
         switch pageKind {
         case "villageInfo":
-            gameLog = "🕵️ فتحنا \(target.name)... بنروح لنقطة التجمع"
+            logActivity("📖 فتحت صفحة \(target.name) — بدور على زر الإرسال...")
             engine.clickSendTroopsFromVillageInfo { [weak self] clicked in
                 guard let self = self else { return }
                 DispatchQueue.main.async {
                     if !clicked {
                         self.pendingSpyVillage = nil
-                        self.gameLog = "مش لاقي زر إرسال جنود في صفحة القرية — جرب من الخريطة تاني"
+                        self.logActivity("❌ مفيش زر إرسال في صفحة القرية — ابعت تشخيص من صفحة القرية")
                     }
                 }
             }
@@ -239,7 +287,7 @@ class WebViewModel: NSObject, ObservableObject {
                 guard let self = self else { return }
                 DispatchQueue.main.async {
                     self.pendingSpyVillage = nil
-                    self.gameLog = ok ? "✅ \(msg) — استنى التقرير في berichte.php" : "❌ \(msg)"
+                    self.logActivity(ok ? "✅ \(msg) — التقرير هيظهر في التقارير" : "❌ \(msg)")
                     if ok {
                         self.sendNotification(title: "🕵️ تجسس", body: "الجواسيس في الطريق — التقرير هيظهر في التقارير")
                     }

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AutomationPanelView: View {
     @ObservedObject var viewModel: WebViewModel
@@ -125,6 +126,9 @@ struct AutomationPanelView: View {
 
                         // ===== تشخيص =====
                         DiagnosticsCard(viewModel: viewModel)
+
+                        // ===== سجل الحركات =====
+                        ActivityCard(viewModel: viewModel)
 
                         // Quick actions
                         HStack(spacing: 12) {
@@ -457,6 +461,15 @@ struct VillagesCard: View {
                             .background(Color.blue.opacity(0.8))
                             .cornerRadius(6)
                     }
+                    Button(action: { viewModel.spyFromCurrentPage() }) {
+                        Text("جسّس من الصفحة الحالية")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.purple.opacity(0.8))
+                            .cornerRadius(6)
+                    }
                 }
             }
 
@@ -558,6 +571,52 @@ struct SpyReportsCard: View {
     }
 }
 
+// MARK: - كارت سجل الحركات
+
+struct ActivityCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("📜 سجل حركات البوت")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                if !viewModel.activityLog.isEmpty {
+                    Button(action: { viewModel.activityLog.removeAll() }) {
+                        Text("تفريغ")
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+
+            if viewModel.activityLog.isEmpty {
+                Text("هنا هتشوف كل حاجة البوت عملها — نجحت أو فشلت وليه")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(viewModel.activityLog.prefix(12).enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(6)
+                .background(Color.black.opacity(0.5))
+                .cornerRadius(8)
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
 // MARK: - كارت التشخيص
 
 struct DiagnosticsCard: View {
@@ -579,9 +638,23 @@ struct DiagnosticsCard: View {
                         .background(Color.blue.opacity(0.8))
                         .cornerRadius(6)
                 }
+                if !viewModel.diagnosticsOutput.isEmpty && viewModel.diagnosticsOutput != "جاري الفحص..." {
+                    Button(action: {
+                        UIPasteboard.general.string = viewModel.diagnosticsOutput
+                        viewModel.gameLog = "📋 النسخ اتعمل — الصق النتيجة في المحادثة"
+                    }) {
+                        Text("📋 نسخ")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Color.green.opacity(0.8))
+                            .cornerRadius(6)
+                    }
+                }
             }
 
-            Text("لو الموارد أو التدريب مش ظاهرين، دوس افحص وابعتلي صورة النتيجة — بتاع دي بتوريني الـ DOM الحقيقي للعبة")
+            Text("افحص وانسخ والصق النتيجة في المحادثة — دي بتوريني اللعبة بعينيها عشان أظبط البوت بالظبط")
                 .font(.caption2)
                 .foregroundColor(.gray)
 

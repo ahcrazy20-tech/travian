@@ -104,6 +104,7 @@ final class GameEngine: NSObject {
         if path.hasPrefix("a2b") { return "a2b" }
         if path.hasPrefix("karte") { return q.contains("d=") ? "villageInfo" : "map" }
         if path.hasPrefix("map") { return "map" }
+        if q.contains("d=") { return "villageInfo" }
         if path.hasPrefix("build") {
             if q.range(of: #"id=(19|20|21|25|26|29|30)"#, options: .regularExpression) != nil {
                 return "training"
@@ -442,10 +443,11 @@ final class GameEngine: NSObject {
               filled++;
             });
             if(filled===0) return JSON.stringify({ok:false,filled:0,message:'لم أجد حقول التدريب'});
-            var btn=scope.querySelector('button[type="submit"], input[type="submit"], button[name="s"], input[type="image"]');
-            if(!btn) return JSON.stringify({ok:false,filled:filled,message:'وجدت الحقول لكن لا يوجد زر تدريب'});
-            btn.click();
-            return JSON.stringify({ok:true,filled:filled,message:'بدأ التدريب'});
+            var btn=scope.querySelector('button[type="submit"], input[type="submit"], button[name="s"], input[type="image"], button:not([type])');
+            if(btn){ btn.click(); }
+            else if(scope.requestSubmit){ scope.requestSubmit(); }
+            else { return JSON.stringify({ok:false,filled:filled,message:'وجدت الحقول لكن لا يوجد زر تدريب'}); }
+            return JSON.stringify({ok:true,filled:filled,message:'بدأ التدريب ('+filled+' حقل)'});
           }catch(e){ return JSON.stringify({ok:false,filled:0,message:e.message}); }
         })();
         """
@@ -522,7 +524,17 @@ final class GameEngine: NSObject {
         if(links.length===0){
           links=document.querySelectorAll('a[href*="a2b"]');
         }
-        if(links.length===0) return JSON.stringify({clicked:false});
+        if(links.length===0){
+          links=document.querySelectorAll('a[href*="send"], a[href*="troop"], a[href*="attack"]');
+        }
+        if(links.length===0){
+          var btns=document.querySelectorAll('button, input[type="submit"], [role="button"]');
+          for(var i=0;i<btns.length;i++){
+            var tx=(btns[i].textContent||btns[i].value||'');
+            if(/إرسال|جنود|send/i.test(tx)){ btns[i].click(); return JSON.stringify({clicked:true,via:'text'}); }
+          }
+          return JSON.stringify({clicked:false});
+        }
         links[0].click();
         return JSON.stringify({clicked:true});
       }catch(e){ return JSON.stringify({clicked:false,error:e.message}); }
@@ -573,9 +585,10 @@ final class GameEngine: NSObject {
             scout.dispatchEvent(new Event('change',{bubbles:true}));
             var raid=form.querySelector('input[name="c"][value="4"], input[value="4"]');
             if(raid) raid.click();
-            var btn=form.querySelector('button[type="submit"], button[name="s"], input[type="submit"], input[type="image"]');
-            if(!btn) return JSON.stringify({sent:false,message:'لا يوجد زر إرسال'});
-            btn.click();
+            var btn=form.querySelector('button[type="submit"], button[name="s"], input[type="submit"], input[type="image"], button:not([type])');
+            if(btn){ btn.click(); }
+            else if(form.requestSubmit){ form.requestSubmit(); }
+            else { return JSON.stringify({sent:false,message:'لا يوجد زر إرسال'}); }
             return JSON.stringify({sent:true,message:'انطلق \(count) من الجواسيس 🕵️'});
           }catch(e){ return JSON.stringify({sent:false,message:e.message}); }
         })();
@@ -643,9 +656,10 @@ final class GameEngine: NSObject {
             }
             var mode=form.querySelector(raid?'input[name="c"][value="4"]':'input[name="c"][value="3"]');
             if(mode) mode.click();
-            var btn=form.querySelector('button[name="s"], button[type="submit"], input[type="image"][name="s1"], input[type="submit"]');
-            if(!btn) return JSON.stringify({sent:false,message:'لا يوجد زر إرسال'});
-            btn.click();
+            var btn=form.querySelector('button[name="s"], button[type="submit"], input[type="image"][name="s1"], input[type="submit"], button:not([type])');
+            if(btn){ btn.click(); }
+            else if(form.requestSubmit){ form.requestSubmit(); }
+            else { return JSON.stringify({sent:false,message:'لا يوجد زر إرسال'}); }
             return JSON.stringify({sent:true,message:'الهجوم انطلق ⚔️'});
           }catch(e){ return JSON.stringify({sent:false,message:e.message}); }
         })();
@@ -753,50 +767,68 @@ final class GameEngine: NSObject {
         if(c) s+='.'+c.split(/\\s+/).join('.');
         return s+'>';
       }
-      function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
       var out=[];
       out.push('URL: '+location.href);
       out.push('TITLE: '+(document.title||''));
-      ['l1','l2','l3','l4','l5'].forEach(function(id){
-        var e=document.querySelector('#'+id);
-        out.push('#'+id+': '+(e?('TEXT="'+(e.textContent||'').trim().substring(0,30)+'" TITLE="'+(e.getAttribute('title')||'')+'"'):'-'));
+      out.push('== FORMS ==');
+      document.querySelectorAll('form').forEach(function(f,fi){
+        var act=f.getAttribute('action')||'-';
+        var mth=(f.getAttribute('method')||'get').toLowerCase();
+        out.push('F'+fi+' '+mth+' '+act.substring(0,70));
+        f.querySelectorAll('input,button,select,textarea').forEach(function(i,ii){
+          if(ii>=16) return;
+          var t=i.tagName.toLowerCase();
+          var line='  '+t+' name='+(i.getAttribute('name')||'-')+' type='+(i.getAttribute('type')||'-');
+          var mx=i.getAttribute('max')||i.getAttribute('data-max');
+          if(mx) line+=' max='+mx;
+          var ph=i.getAttribute('placeholder');
+          if(ph) line+=' ph='+ph.substring(0,15);
+          if(t=='button'||i.getAttribute('type')=='submit'){
+            var tx=(i.textContent||i.value||'').trim();
+            if(tx) line+=' text='+tx.substring(0,20);
+          }
+          out.push(line);
+        });
       });
-      out.push('-- ارقام فوق --');
-      var nums=[];
+      out.push('== LINKS ==');
+      var seen={};
+      document.querySelectorAll('a[href]').forEach(function(a){
+        if(out.length>115) return;
+        var h=a.getAttribute('href')||'';
+        if(!/karte|map|a2b|build|berichte|spy|attack|send|dorf/.test(h)) return;
+        if(seen[h]) return; seen[h]=1;
+        var tx=(a.textContent||a.getAttribute('title')||'').trim().replace(/\\s+/g,' ').substring(0,24);
+        out.push(h.substring(0,90)+' "'+tx+'"');
+      });
+      out.push('== TOPNUM ==');
+      var nums=0;
       document.querySelectorAll('div,span,td,li,a,b,p').forEach(function(e){
-        if(nums.length>=10) return;
+        if(nums>=8) return;
         var t=(e.textContent||'').trim();
         if(e.children.length===0 && /^[0-9][0-9,.\\s]{2,}$/.test(t)){
           var r=e.getBoundingClientRect();
-          if(r.width>0 && r.top>=0 && r.top<=340) nums.push(brief(e)+' top='+Math.round(r.top)+' "'+t.substring(0,22)+'"');
+          if(r.width>0&&r.top>=0&&r.top<=340){
+            out.push(brief(e)+' top='+Math.round(r.top)+' "'+t.substring(0,20)+'"'); nums++;
+          }
         }
       });
-      nums.forEach(function(n){ out.push(n); });
-      out.push('-- فورمات --');
-      document.querySelectorAll('form').forEach(function(f,fi){
-        var parts=[];
-        f.querySelectorAll('input,button,select').forEach(function(i){
-          if(parts.length>=14) return;
-          parts.push((i.name||i.id||'?')+(i.type?'/'+i.type:''));
-        });
-        out.push('F'+fi+' act='+(f.getAttribute('action')||'-')+' :: '+parts.join(' | '));
-      });
-      out.push('-- صور وحدات --');
-      var u=[];
+      out.push('== UNITS ==');
+      var u=0;
       document.querySelectorAll('img').forEach(function(im){
-        if(u.length>=10) return;
+        if(u>=12) return;
         var m=((im.getAttribute('class')||'')+' '+(im.getAttribute('src')||'')).match(/u(\\d{1,2})/);
-        if(m) u.push('u'+m[1]+' "'+((im.getAttribute('title')||im.getAttribute('alt')||'').substring(0,20))+'"');
+        if(!m) return;
+        var tr=im.closest('tr');
+        var ns=tr?(tr.textContent.match(/\\d+/g)||[]):[];
+        out.push('u'+m[1]+' "'+((im.getAttribute('title')||im.getAttribute('alt')||'').substring(0,22))+'"'+(ns.length?' last='+ns[ns.length-1]:''));
+        u++;
       });
-      u.forEach(function(x){ out.push(x); });
-      out.push('-- مدخلات بحد اقصى --');
-      document.querySelectorAll('input[max], input[data-max]').forEach(function(i){
-        if(out.length>60) return;
-        out.push('INP '+(i.name||i.id||'?')+' max='+(i.getAttribute('max')||i.getAttribute('data-max')));
-      });
-      ['a2b','karte','berichte','build.php'].forEach(function(k){
-        var n=document.querySelectorAll('a[href*="'+k+'"]').length;
-        out.push('روابط '+k+': '+n);
+      out.push('== ONCLICK ==');
+      var oc=0;
+      document.querySelectorAll('[onclick]').forEach(function(e){
+        if(oc>=10) return;
+        out.push(brief(e)+' '+(e.getAttribute('onclick')||'').substring(0,80));
+        oc++;
       });
       return JSON.stringify({lines:out});
     })();
