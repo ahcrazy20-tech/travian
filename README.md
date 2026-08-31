@@ -30,3 +30,10 @@
 ```bash
 python3 scripts/check_project.py .
 ```
+
+## ⚠️ بعد ما تدمج التعديلات
+
+لو الـ build لسه مش بيبدأ من GitHub: لازم ملف [`.github/workflows/build.yml`](.github/workflows/build.yml)
+يتحدّث من النسخة الجديدة في [`ci/build.yml`](ci/build.yml) — GitHub بيمنع الـ App
+اللي بيكتب الكود ده إنه يلمس ملفات `.github/workflows/`. التفاصيل والخطوات في
+[`UtatarApp/README.md`](UtatarApp/README.md#️-خطوة-واحدة-لازم-تعملها-انت-تحديث-ملف-الـ-workflow).

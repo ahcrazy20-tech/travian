@@ -138,6 +138,36 @@
 python3 scripts/check_project.py .
 ```
 
+### ⚠️ خطوة واحدة لازم تعملها انت (تحديث ملف الـ workflow)
+
+GitHub **بيمنع** أي GitHub App (وده الحساب اللي بيبنّي المستودع هنا) إنه يعدّل ملفات جوّه
+`.github/workflows/` — رسالة الخطأ بتكون:
+`refusing to allow a GitHub App to create or update workflow ... without 'workflows' permission`.
+
+عشان كده النسخة الصحيحة من الـ workflow محفوظة في **[`ci/build.yml`](../ci/build.yml)** ولازم
+تنسخها فوق الملف القديم بنفسك (دقيقتين من المتصفح، من غير أي أدوات):
+
+1. افتح: `https://github.com/ahcrazy20-tech/travian/edit/main/.github/workflows/build.yml`
+2. امسح **كل** المحتوى والصق مكانه محتوى [`ci/build.yml`](../ci/build.yml) كامل
+3. `Commit changes` (على فرع `main`)
+4. افتح تبويب **Actions** ← **🎮 Build UtatarApp iOS** ← **Run workflow**
+
+> ملف `.github/workflows/build.yml` في مساحة الشغل بتاعتك متصلّح بالفعل (نفس محتوى `ci/build.yml`)،
+> اللي ناقص هو رفعه على GitHub.
+
+**ليه البناء كان مش يبدأ أصلاً؟** الملف القديم كان فيه فلتر:
+
+```yaml
+paths:
+  - 'UtatarApp/**'
+```
+
+والـ commit اللي بيّه اتعمل ملف `build.yml` غيّر ملف الـ workflow **بس** (من غير مجلد `UtatarApp/`)،
+فـ GitHub ما لقاش ملف مطابق للفيلتر ← **صفر runs**. كمان `runs-on: macos-14` اتقاعد،
+و `Xcode 15.0` مبقاش موجود على الصورة، و `xcpretty` مش مثبت (فأي نجاح كان هيطلع فشل)،
+و `actions/cache@v3` بيشتغل على Node 16 اللي اتقفل. كل ده اتصلّح في `ci/build.yml`.
+
+
 ### ❌ أخطاء البناء اللي اتصلّحت (٢٠٢٦-٠٨-٣١)
 
 | # | المشكلة | التأثير | الحل |
