@@ -212,7 +212,11 @@ jobs:
           rm -rf build/ipa && mkdir -p build/ipa/Payload
           cp -R "$APP" build/ipa/Payload/
           # -y keeps symlinks; the payload layout (Payload/App.app) is what installers expect
-          (cd build/ipa && zip -qry "$GITHUB_WORKSPACE/build/${PROJECT_NAME}.ipa" Payload)
+          (cd build/ipa && zip -qryX "$GITHUB_WORKSPACE/build/${PROJECT_NAME}.ipa" Payload)
+          echo "--- IPA layout (must start with Payload/UtatarApp.app/) ---"
+          unzip -l "build/${PROJECT_NAME}.ipa" | sed -n '4,7p'
+          unzip -l "build/${PROJECT_NAME}.ipa" | grep -q "Payload/${PROJECT_NAME}.app/Info.plist" || {
+            echo "❌ bad layout - installers would reject this .ipa" >&2; exit 1; }
           ls -lh build/*.ipa
           echo "IPA_SIZE=$(du -h build/${PROJECT_NAME}.ipa | cut -f1)" >> "$GITHUB_ENV"
           echo "IPA_PATH=build/${PROJECT_NAME}.ipa" >> "$GITHUB_ENV"

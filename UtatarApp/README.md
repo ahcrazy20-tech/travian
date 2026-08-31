@@ -121,60 +121,54 @@
 `P12_BASE64`, `P12_PASSWORD`, `TEAM_ID`, `PROVISIONING_PROFILE` — والـ workflow
 هيعمل الأرشيف بالتوقيع أوتوماتك.
 
-## 📲 ملف الـ IPA وتركيبه بـ TrolStore
+## 📲 ملف الـ IPA وتركيبه بـ TrolStore / TrollStore
 
-### ⛑️ لو عندك الـ zip القديم دلوقتي وعايز الـ IPA حالاً
-ملفات الـ `UtatarApp.xcarchive` اللي جوّه الـ zip فيها الـ `.app` الجاهز — وحدها الـ IPA
-(الـ IPA = `Payload/UtatarApp.app` مضغوط zip). على كمبيوتر:
+### 🔧 طريق 1 — عندك الـ zip دلوقتي وعايز الـ IPA في ثانية (من غير GitHub خالص)
+الـ IPA هو مجرد zip جذره `Payload/<App>.app` — فبنستخدم أداة صغيرة بتعمل ده و**بتتأكد** إن
+الهيكل صح (لو الهيكل غلط TrollStore بيرفض ويسيبك من غير سبب واضح):
 
 ```bash
-unzip UtatarApp-IPA.zip -d utatar
-APP=$(find utatar -name "UtatarApp.app" -maxdepth 6 | head -1)
-mkdir -p Payload && cp -R "$APP" Payload/
-zip -qry UtatarApp.ipa Payload && rm -rf Payload
-# → UtatarApp.ipa جاهز للتركيب بـ TrollStore / TrolStore
+# على Mac أو Linux
+./scripts/make_ipa.sh ~/Downloads/UtatarApp-IPA.zip -o UtatarApp.ipa
+./scripts/make_ipa.sh build/UtatarApp.xcarchive -o UtatarApp.ipa      # أو من أرشيف
+./scripts/make_ipa.sh bad.ipa -o fixed.ipa                            # أو إصلح IPA مكسر
 ```
-> ملاحظة: البناء القديم ده اتعمل قبل ما نزّل الـ target لـ iOS 15 — فبرضه محتاج iOS 16.4+.
-> بعد ما تحدّث الـ workflow من `ci/build.yml` مفيش حاجة من دي محتاجا: الـ IPA بينزل لوحده في Releases.
+السكريبت بيطبع: bundle id، min iOS، نوع الـ binary (لازم **arm64**)، بيوقّع ad-hoc لو `codesign`
+موجود (على Mac)، وبيعمل verify إن `Payload/UtatarApp.app/Info.plist` في جذر الـ IPA.
 
-### 🚨 ليه اللي نزل كان zip؟
-كل **Artifacts** في GitHub Actions بتنزل كملف `.zip` (دي سياسة GitHub، مش مشكلة في
-البناء). ملف الـ IPA الحقيقي جوه الـ zip.
+### ✅ طريق 2 — الـ CI ينزّلك `.ipa` نضيف (أحسن حل)
+الملف القديم على `main` **لسه بيرفع `.xcarchive` بس** ومفيش IPA في الـ artifact خالص —
+عشان كده كل اللي بتنزله zip. النسخة الجديدة الصغيرة دي بتظبط ده:
 
-- ❌ متعملش rename للـ `.zip` ويصير `.ipa` — الملف هيظل zip والتثبيت هيفشل
-- ✅ فك الضغط (Files app على الآيفون فيه زر فك الضغط، أو على الكمبيوتر) → هتلاقي `UtatarApp.ipa`
-
-### ✅ الطريقة الصح: نحمّل الـ IPA مباشرة من Releases
-البناء بقى بينشر ملف **`UtatarApp.ipa`** كمرفق على **Releases** (ملف حقيقي، مش zip):
+1. ادمج [PR #2](https://github.com/ahcrazy20-tech/travian/pull/2) (كود التطبيق اتصلّح + iOS 15 + الأيقونات)
+2. اعمل **ملف جديد** (مش تعديل لملف قديم — أسهل وأأمن):
+   `https://github.com/ahcrazy20-tech/travian/new/main?filename=.github/workflows/ipa.yml`
+   والصق فيه محتوى [`ci/ipa.yml`](../ci/ipa.yml) → **Commit new file**
+3. Actions → **📲 Build IPA for TrollStore** → Run workflow (~3 دقايق)
+4. في صفحة الـ Summary هيظهر الرابط، وكل مرة نفس الرابط الثابت:
 
 ```
-https://github.com/ahcrazy20-tech/travian/releases/download/ipa-main/UtatarApp.ipa
+https://github.com/ahcrazy20-tech/travian/releases/download/trollstore-latest/UtatarApp.ipa
 ```
 
-الرابط ده **ثابت** — كل build على `main` بيحدّث نفس الملف، فممكن تحطه مرة واحدة في TrolStore
-ويفضل بيجيب آخر نسخة. الرابط بيتحط كمان في صفحة **Summary** بتاعة كل run تحت عنوان
-**📲 Your IPA is ready**.
+**Releases assets بتنزل كملف `.ipa` فعلي** — على الـ iPhone: افتح الرابط في Safari →
+`Downloads` / Files → Share → **TrollStore** (أو TrolStore → Add app / install by URL).
+لو لسه نزل zip: يبقى انت داخل على **Artifacts** (دي دايماً zip) — استخدم Releases.
 
-### 🛫 التثبيت بـ TrolStore / TrollStore
-1. افتح رابط الـ IPA على الآيفون (Safari) → **Save to Files**
-2. TrolStore → *Add app / install by URL* → الصق الرابط نفسه (أو اختار الملف من Files)
-3. Install → التطبيق هيظهر على الشاشة الرئيسية من غير ما تحتاج كمبيوتر
+> محتاجين الـ repo يسمح للـ workflow إنه ينشر Release:
+> **Settings → Actions → General → Workflow permissions → Read and steps write permissions**.
+> لو مقفول، الـ step بيتعمل skip والـ IPA يفضل موجود في الـ artifact (فك الضغط مرة واحدة).
 
-> الـ IPA بيطلع **ad-hoc signed** (`codesign -s -`) من الـ CI — ده المطلوب لـ TrollStore/TrolStore،
-> وبيمنع خطأ `Code Signature Invalid` اللي بييجي مع الملفات غير الموقعة خالص.
+### ❓ TrollStore بيرفض — التشخيص السريع
+| الرسالة | السبب | الحل |
+|---------|-------|------|
+| مفيش رد / مش بيضيف التطبيق | الملف zip متسمّي `.ipa` | `unzip` الأول، أو استخدم `scripts/make_ipa.sh` |
+| `Invalid IPA` / `missing Info.plist` | `Payload/` مش في جذر الـ zip | أعد التغليف: `cd pkg && zip -qryX ../UtatarApp.ipa Payload` |
+| `Code Signature Invalid` | الـ binary من غير توقيع | `codesign --force --deep --sign - UtatarApp.app` قبل التغليف (السكريبت بيعملها) |
+| `This app requires iOS x` | `MinimumOSVersion` أعلى من جهازك | نزّل `IPHONEOS_DEPLOYMENT_TARGET` في `project.pbxproj` |
+| الجهاز iOS 17 / 18 | TrollStore نفسه مش بيدعمهم | وقّع بـ **Sideloadly** أو **AltStore** بنفس ملف الـ IPA (Apple ID مجاني = 7 أيام) |
+| الجهاز iOS 14 أو أقدم | التطبيق بقى iOS 15+ | ارجّعه 14.0 وبدّل `TextField(value:format:)` في `FarmingSettingsView` |
 
-### 📱 إصدار iOS المطلوب
-التطبيق بقى مطلوبه **iOS 15.0+** (كان 16.4) عشان يغطي كل نطاق TrollStore:
-
-| iOS الجهاز | الطريق |
-|------------|--------|
-| 14.0 – 16.6.1 (و 17.0 betas) | TrollStore / TrolStore مباشرة ✅ |
-| 17.x – 18.x | TrollStore ما بيشتغلش — استخدم **Sideloadly** أو **AltStore** يوقّعوا نفس الـ IPA بـ Apple ID (7 أيام، 3 أجهزة) |
-| 14.0 – 14.8 | نزّل `IPHONEOS_DEPLOYMENT_TARGET` لـ 14.0 لو محتاج (هتحتاج تبدّل `TextField(value:format:)` في `FarmingSettingsView`) |
-
-### 🔑 عايز IPA موقّع بحسابك من CI من الأول؟
-ضيف secrets: `P12_BASE64`, `P12_PASSWORD`, `TEAM_ID`, `PROVISIONING_PROFILE` — الـ workflow
-هيعمل signing أوتوماتك والـ IPA ينزل موقّع بموبايلك من أول مرة.
 
 ## 🛠️ البناء من المصدر (Mac + Xcode)
 
@@ -193,19 +187,23 @@ https://github.com/ahcrazy20-tech/travian/releases/download/ipa-main/UtatarApp.i
 python3 scripts/check_project.py .
 ```
 
-### ⚠️ خطوة واحدة لازم تعملها انت (تحديث ملف الـ workflow)
+### ⚠️ خطوة واحدة لازم تعملها انت (ملفات `.github/workflows/`)
 
 GitHub **بيمنع** أي GitHub App (وده الحساب اللي بيبنّي المستودع هنا) إنه يعدّل ملفات جوّه
 `.github/workflows/` — رسالة الخطأ بتكون:
 `refusing to allow a GitHub App to create or update workflow ... without 'workflows' permission`.
 
-عشان كده النسخة الصحيحة من الـ workflow محفوظة في **[`ci/build.yml`](../ci/build.yml)** ولازم
-تنسخها فوق الملف القديم بنفسك (دقيقتين من المتصفح، من غير أي أدوات):
+عشان كده الملفات الصحيحة محفوظة في `ci/` واختار واحدة (الاتنين شغالين):
 
-1. افتح: `https://github.com/ahcrazy20-tech/travian/edit/main/.github/workflows/build.yml`
-2. امسح **كل** المحتوى والصق مكانه محتوى [`ci/build.yml`](../ci/build.yml) كامل
-3. `Commit changes` (على فرع `main`)
-4. افتح تبويب **Actions** ← **🎮 Build UtatarApp iOS** ← **Run workflow**
+**أ) الأسهل — ملف جديد صغير (IPA + Release رابط مباشر):**
+1. `https://github.com/ahcrazy20-tech/travian/new/main?filename=.github/workflows/ipa.yml`
+2. الصق محتوى [`ci/ipa.yml`](../ci/ipa.yml) كامل → `Commit new file`
+3. Actions ← **📲 Build IPA for TrollStore** ← Run workflow
+
+**ب) الكامل — فحص + بناء محاكي + أيقونات + Release:**
+1. `https://github.com/ahcrazy20-tech/travian/edit/main/.github/workflows/build.yml`
+2. امسح **كل** المحتوى والصق مكانه محتوى [`ci/build.yml`](../ci/build.yml) → `Commit changes`
+3. Actions ← **🎮 Build UtatarApp iOS** ← Run workflow
 
 > ملف `.github/workflows/build.yml` في مساحة الشغل بتاعتك متصلّح بالفعل (نفس محتوى `ci/build.yml`)،
 > اللي ناقص هو رفعه على GitHub.
@@ -269,8 +267,15 @@ UtatarApp/
 │   ├── SpyAttackBot.swift      # 🕵️ بوت التجسس والهجوم
 │   ├── SpyAttackPanelView.swift # لوحة بوت التجسس
 │   ├── Info.plist              # إعدادات التطبيق
-│   └── Assets.xcassets/        # الأيقونات
+│   ├── Compatibility.swift     # تنازلات iOS 15 (utatarTint)
+│   └── Assets.xcassets/        # الأيقونات (18 حجم)
 └── README.md                   # هذا الملف
+
+# ومن جذر المستودع
+ci/ipa.yml                      # workflow قصير: IPA + رابط Releases مباشر
+ci/build.yml                    # workflow كامل: فحص + محاكي + IPA + Release
+scripts/make_ipa.sh             # يحوّل .app / .xcarchive / zip → .ipa ويتأكد الهيكل
+scripts/check_project.py        # فحص ساكن لمشروع Xcode
 ```
 
 ---
