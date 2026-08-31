@@ -516,7 +516,7 @@ struct FarmingSettingsView: View {
                                 get: { Double(bot.farmingSettings.troopPercentage) },
                                 set: { bot.farmingSettings.troopPercentage = Int($0) }
                             ), in: 10...90, step: 5)
-                            .tint(.red)
+                            .utatarTint(.red)
                             
                             Text("هيبعت \(bot.farmingSettings.troopPercentage)% من جنودك")
                                 .font(.caption)

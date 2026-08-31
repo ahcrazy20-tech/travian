@@ -121,6 +121,47 @@
 `P12_BASE64`, `P12_PASSWORD`, `TEAM_ID`, `PROVISIONING_PROFILE` — والـ workflow
 هيعمل الأرشيف بالتوقيع أوتوماتك.
 
+## 📲 ملف الـ IPA وتركيبه بـ TrolStore
+
+### 🚨 ليه اللي نزل كان zip؟
+كل **Artifacts** في GitHub Actions بتنزل كملف `.zip` (دي سياسة GitHub، مش مشكلة في
+البناء). ملف الـ IPA الحقيقي جوه الـ zip.
+
+- ❌ متعملش rename للـ `.zip` ويصير `.ipa` — الملف هيظل zip والتثبيت هيفشل
+- ✅ فك الضغط (Files app على الآيفون فيه زر فك الضغط، أو على الكمبيوتر) → هتلاقي `UtatarApp.ipa`
+
+### ✅ الطريقة الصح: نحمّل الـ IPA مباشرة من Releases
+البناء بقى بينشر ملف **`UtatarApp.ipa`** كمرفق على **Releases** (ملف حقيقي، مش zip):
+
+```
+https://github.com/ahcrazy20-tech/travian/releases/download/ipa-main/UtatarApp.ipa
+```
+
+الرابط ده **ثابت** — كل build على `main` بيحدّث نفس الملف، فممكن تحطه مرة واحدة في TrolStore
+ويفضل بيجيب آخر نسخة. الرابط بيتحط كمان في صفحة **Summary** بتاعة كل run تحت عنوان
+**📲 Your IPA is ready**.
+
+### 🛫 التثبيت بـ TrolStore / TrollStore
+1. افتح رابط الـ IPA على الآيفون (Safari) → **Save to Files**
+2. TrolStore → *Add app / install by URL* → الصق الرابط نفسه (أو اختار الملف من Files)
+3. Install → التطبيق هيظهر على الشاشة الرئيسية من غير ما تحتاج كمبيوتر
+
+> الـ IPA بيطلع **ad-hoc signed** (`codesign -s -`) من الـ CI — ده المطلوب لـ TrollStore/TrolStore،
+> وبيمنع خطأ `Code Signature Invalid` اللي بييجي مع الملفات غير الموقعة خالص.
+
+### 📱 إصدار iOS المطلوب
+التطبيق بقى مطلوبه **iOS 15.0+** (كان 16.4) عشان يغطي كل نطاق TrollStore:
+
+| iOS الجهاز | الطريق |
+|------------|--------|
+| 14.0 – 16.6.1 (و 17.0 betas) | TrollStore / TrolStore مباشرة ✅ |
+| 17.x – 18.x | TrollStore ما بيشتغلش — استخدم **Sideloadly** أو **AltStore** يوقّعوا نفس الـ IPA بـ Apple ID (7 أيام، 3 أجهزة) |
+| 14.0 – 14.8 | نزّل `IPHONEOS_DEPLOYMENT_TARGET` لـ 14.0 لو محتاج (هتحتاج تبدّل `TextField(value:format:)` في `FarmingSettingsView`) |
+
+### 🔑 عايز IPA موقّع بحسابك من CI من الأول؟
+ضيف secrets: `P12_BASE64`, `P12_PASSWORD`, `TEAM_ID`, `PROVISIONING_PROFILE` — الـ workflow
+هيعمل signing أوتوماتك والـ IPA ينزل موقّع بموبايلك من أول مرة.
+
 ## 🛠️ البناء من المصدر (Mac + Xcode)
 
 ```bash
@@ -180,6 +221,9 @@ paths:
 | 6 | مفيش shared scheme في `.xcodeproj` | `xcodebuild -scheme` على CI بيحتاج scheme محفوظ | اتضاف `xcshareddata/xcschemes/UtatarApp.xcscheme` |
 | 7 | CI كان بيستخدم `runs-on: macos-14` + `setup-xcode 15.0` + `xcpretty` + `actions/cache@v3` + فلتر `paths:` | الـ build **مارضيش يبدأ** أصلاً، وكان بيفشل على أي صورة قديمة | `macos-latest` بدون تثبيت Xcode، بدون xcpretty، بدون cache، وبدون فلتر paths |
 | 8 | نسخة التطبيق مكتوبة باليد في `Info.plist` مع `MARKETING_VERSION` | تعارض في إصدار التطبيق | `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)` |
+| 9 | أيقونة بحجم واحد (universal 1024) مع target أقل من iOS 17 | `actool` محتاج الحجم الكامل على الإصدارات القديمة | اتحطت مجموعة أيقونات كاملة (18 حجم iPhone/iPad + 1024 marketing) |
+| 10 | `IPHONEOS_DEPLOYMENT_TARGET = 16.4` + `.tint()` (iOS 16+) | التطبيق مكنش بيركب على iOS 15.x ولا على 16.0–16.3 (كلها نطاق TrollStore) | بقى **15.0** و `.tint()` اتلفّ بـ `utatarTint()` في `Compatibility.swift` بينادي `accentColor` على iOS 15 |
+| 11 | مخرج الـ CI كان artifact بصيغة zip | مفيش ملف IPA للتحميل المباشر | بقى بينشر **`UtatarApp.ipa`** في Releases + بيوقّعه ad-hoc للتركيب بـ TrollStore/TrolStore |
 
 كمان `bot.scanVillageDetails(...)` بقى بيحدّث القرى في القائمة فعلياً بعد الفحص
 (`SpyAttackBot.updateVillage(_:)`) بدل ما كان تعليق فاضي.

@@ -20,7 +20,7 @@ struct ContentView: View {
                     HStack {
                         Spacer()
                         ProgressView()
-                            .tint(.white)
+                            .utatarTint(.white)
                             .scaleEffect(1.5)
                         Spacer()
                     }

@@ -122,13 +122,18 @@ jobs:
           retention-days: 7
 
   # ==========================================================
-  # Job 3 — archive for the device + package an IPA
+  # Job 3 — archive for the device, ad-hoc sign, build a REAL .ipa,
+  #         and publish it as a Release asset so you download UtatarApp.ipa
+  #         directly (Artifacts are always wrapped in a .zip — that's why
+  #         you got a zip before).
   # ==========================================================
   build-ipa:
-    name: 📦 Archive + IPA (device)
+    name: 📦 IPA (device) + Release link
     runs-on: macos-latest
     needs: [checks, build-simulator]
     timeout-minutes: 45
+    permissions:
+      contents: write          # needed to create the Release with the .ipa
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -138,10 +143,10 @@ jobs:
         run: |
           if [ -n "${P12_BASE64:-}" ] && [ -n "${TEAM_ID:-}" ]; then
             echo "enabled=true"  >> "$GITHUB_OUTPUT"
-            echo "✅ Signing secrets found → producing a signed IPA"
+            echo "✅ Signing secrets found → the IPA will be signed with your certificate"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "ℹ️  No signing secrets → producing an UNSIGNED .app/IPA (re-sign it with Sideloadly/AltStore)"
+            echo "ℹ️  No signing secrets → IPA is ad-hoc signed (correct for TrollStore / TrolStore)"
           fi
 
       - name: 🏗️ Archive (Release, device)
@@ -173,73 +178,88 @@ jobs:
           echo "===== last 40 lines ====="
           tail -40 build/xcodebuild-archive.log || true
 
-      - name: 📦 Package IPA from the archive
+      - name: 📦 Build UtatarApp.ipa
         run: |
           set -euo pipefail
-          APP="$(find "build/${PROJECT_NAME}.xcarchive/Products/Applications" -maxdepth 1 -name '*.app' | head -n1)"
+          ARCHIVE="build/${PROJECT_NAME}.xcarchive"
+          APP="$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name '*.app' | head -n1)"
           if [ -z "$APP" ]; then
             echo "❌ no .app inside the archive" >&2
-            find "build/${PROJECT_NAME}.xcarchive" -maxdepth 3 | head -40 >&2
+            find "$ARCHIVE" -maxdepth 3 | head -40 >&2
             exit 1
           fi
-          echo "Packaging: $APP"
+          echo "Packing: $APP"
+
           python3 - "$APP" <<'PY'
           import plistlib, pathlib, sys
-          info = pathlib.Path(sys.argv[1]) / "Info.plist"
-          data = plistlib.loads(info.read_bytes())
-          print("Bundle id :", data.get("CFBundleIdentifier"))
-          print("Version   :", data.get("CFBundleShortVersionString"), "build", data.get("CFBundleVersion"))
-          print("Min iOS   :", data.get("MinimumOSVersion"))
-          print("Signature :", "present" if (pathlib.Path(sys.argv[1]) / "_CodeSignature").exists() else "MISSING (unsigned)")
+          data = plistlib.loads((pathlib.Path(sys.argv[1]) / "Info.plist").read_bytes())
+          print("Bundle id      :", data.get("CFBundleIdentifier"))
+          print("Version        :", data.get("CFBundleShortVersionString"), "build", data.get("CFBundleVersion"))
+          print("Minimum iOS    :", data.get("MinimumOSVersion"))
+          sig = pathlib.Path(sys.argv[1]) / "_CodeSignature"
+          print("Signature      :", "present" if sig.exists() else "none yet -> will be ad-hoc signed")
           PY
+
+          # An archive built with CODE_SIGNING_ALLOWED=NO has no signature at all.
+          # TrollStore installs that, but an ad-hoc signature is friendlier to every
+          # installer (TrolStore / Esign / Sideloadly) and avoids "Code Signature Invalid".
+          if [ ! -d "$APP/_CodeSignature" ] && [ "${{ steps.signing.outputs.enabled }}" != "true" ]; then
+            echo "→ ad-hoc signing (codesign -s -)"
+            codesign --force --deep --sign - --timestamp=none "$APP"
+            codesign -dvvv "$APP" 2>&1 | grep -E "^Identifier|^CodeDirectory|Signature" || true
+          fi
+
           rm -rf build/ipa && mkdir -p build/ipa/Payload
           cp -R "$APP" build/ipa/Payload/
-          SUFFIX=""
-          [ -d "$APP/_CodeSignature" ] || SUFFIX="-unsigned"
-          (cd build/ipa && zip -qry "$GITHUB_WORKSPACE/build/${PROJECT_NAME}${SUFFIX}.ipa" Payload)
+          # -y keeps symlinks; the payload layout (Payload/App.app) is what installers expect
+          (cd build/ipa && zip -qry "$GITHUB_WORKSPACE/build/${PROJECT_NAME}.ipa" Payload)
           ls -lh build/*.ipa
+          echo "IPA_SIZE=$(du -h build/${PROJECT_NAME}.ipa | cut -f1)" >> "$GITHUB_ENV"
+          echo "IPA_PATH=build/${PROJECT_NAME}.ipa" >> "$GITHUB_ENV"
 
-      - name: 📤 Upload IPA + xcarchive
+      - name: 🚀 Publish the .ipa as a Release asset (direct download — no zip)
+        if: github.event_name == 'push'
+        continue-on-error: true   # the .ipa is still in the artifact if publishing fails
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="ipa-$(echo "${GITHUB_REF_NAME}" | tr '/' '-')"
+          TITLE="UtatarApp IPA — ${GITHUB_REF_NAME} (build ${GITHUB_RUN_NUMBER})"
+          LINK="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${PROJECT_NAME}.ipa"
+          NOTES="📲 **Install on your iPhone:** open this link in Safari on the phone or paste it into TrolStore.
+
+          | | |
+          |---|---|
+          | File | \`${PROJECT_NAME}.ipa\` (${IPA_SIZE:-?}) |
+          | Min iOS | 15.0 |
+          | Signature | ad-hoc (install with TrollStore / TrolStore, or re-sign with Sideloadly/AltStore) |
+
+          Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$IPA_PATH" --clobber
+          else
+            gh release create "$TAG" "$IPA_PATH" --title "$TITLE" --notes "$NOTES" --prerelease --target "$GITHUB_SHA"
+          fi
+          {
+            echo "## 📲 Your IPA is ready"
+            echo
+            echo "**Direct download (a real \`.ipa\`, not a zip):**"
+            echo
+            echo "\`\`\`"
+            echo "$LINK"
+            echo "\`\`\`"
+            echo
+            echo "1. Open that link on the iPhone (Safari) → \`${PROJECT_NAME}.ipa\` gets saved to the Files app."
+            echo "2. TrolStore → *Add app / install by URL* → paste the same link → install."
+            echo "3. Or grab it from https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ Release asset: $LINK"
+
+      - name: 📤 Upload the .ipa (as an artifact too)
         uses: actions/upload-artifact@v4
         with:
           name: UtatarApp-ipa
-          path: |
-            build/*.ipa
-            build/*.xcarchive
+          path: build/${{ env.PROJECT_NAME }}.ipa
           if-no-files-found: error
           retention-days: 30
-
-  # ==========================================================
-  # Job 4 — optional GitHub Release (only on main, only if asked)
-  # ==========================================================
-  release:
-    name: 🚀 Publish GitHub Release
-    runs-on: ubuntu-latest
-    needs: build-ipa
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
-    steps:
-      - name: 📥 Download IPA
-        uses: actions/download-artifact@v4
-        with:
-          name: UtatarApp-ipa
-          path: release-files
-
-      - name: 🏷️ Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: UtatarApp build ${{ github.run_number }}
-          body: |
-            ## 🎮 UtatarApp build ${{ github.run_number }}
-            - 🕵️ Spy bot + ⚔️ attack bot, 🤖 auto-collect / build / train
-            - 📱 Requires iOS 16.4 or newer
-            ### Install
-            1. Download `UtatarApp-unsigned.ipa`
-            2. Sign + install with Sideloadly or AltStore (a free Apple ID is enough)
-            > ⚠️ The IPA is unsigned unless `P12_BASE64` / `TEAM_ID` secrets are configured in the repo.
-          files: release-files/**/*.ipa
-          fail_on_unmatched_files: false
-          draft: false
-          prerelease: true

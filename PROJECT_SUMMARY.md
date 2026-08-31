@@ -5,7 +5,7 @@
 ### 1. تطبيق iOS كامل (WebView App)
 - **المكان**: `/home/user/travian/UtatarApp/`
 - **اللغة**: Swift + SwiftUI
-- **المستهدف**: iOS 16.4+
+- **المستهدف**: iOS 15.0+ (يغطي كل نطاق TrollStore)
 
 ### 2. الملفات اللي عملناها:
 

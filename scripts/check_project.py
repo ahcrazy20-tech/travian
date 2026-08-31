@@ -282,6 +282,41 @@ def main() -> int:
         except ET.ParseError as exc:
             report(FAIL, f"Info.plist is not valid XML: {exc}")
 
+    # ---- 6b. APIs newer than the deployment target ---------------------------
+    try:
+        deploy_major = float(deploy) if deploy else 0.0
+    except ValueError:
+        deploy_major = 0.0
+    TOO_NEW = {
+        16.0: [
+            (r"(?<![\w.])\.tint\(", ".tint(...)  (iOS 16+)"),
+            (r"\bContentUnavailableView\b", "ContentUnavailableView (iOS 17+)"),
+            (r"\bNavigationStack\b", "NavigationStack (iOS 16+)"),
+            (r"\bpresentationDetents\b", ".presentationDetents (iOS 16+)"),
+        ],
+        17.0: [
+            (r"\bContentUnavailableView\b", "ContentUnavailableView (iOS 17+)"),
+            (r"\bsymbolEffect\b", ".symbolEffect (iOS 17+)"),
+            (r"#Preview\b", "#Preview macro (needs iOS 17 target)"),
+            (r"\bscrollTargetLayout\b", ".scrollTargetLayout (iOS 17+)"),
+        ],
+    }
+    for min_os, patterns in TOO_NEW.items():
+        if deploy_major and deploy_major >= min_os:
+            continue
+        for rx, label in patterns:
+            for path in swift_files:
+                txt = blank_out(open(path, encoding="utf-8").read())
+                # an API guarded by #available is fine
+                guarded = re.search(rf"#available\([^)]*iOS\s*{int(min_os)}[^)]*\)[^{{]*{{[^}}]*{rx}", txt, flags=re.S)
+                for m in re.finditer(rx, txt):
+                    line_no = txt[:m.start()].count("\n") + 1
+                    if guarded and abs(txt[:m.start()].count("\n") - txt[:guarded.start()].count("\n")) < 8:
+                        continue
+                    report(FAIL, f"{os.path.basename(path)}:{line_no} uses {label} but IPHONEOS_DEPLOYMENT_TARGET is {deploy} "
+                                 f"- either guard it with #available or raise the target")
+                    break
+
     # ---- 7. asset catalog ------------------------------------------------------
     catalog = os.path.join(src_dir, "Assets.xcassets")
     if os.path.isdir(catalog):
@@ -304,10 +339,18 @@ def main() -> int:
                 report(FAIL, f"ASSETCATALOG_COMPILER_APPICON_NAME='{appicon_name}' but {appicon_name}.appiconset is missing")
             else:
                 data = json.load(open(os.path.join(set_dir, "Contents.json"), encoding="utf-8"))
-                if not any(img.get("filename") and os.path.exists(os.path.join(set_dir, img["filename"])) for img in data.get("images", [])):
+                entries = data.get("images", [])
+                used = {img.get("filename") for img in entries if img.get("filename")}
+                if not used:
                     report(FAIL, f"{appicon_name}.appiconset has no image file (actool: 'None of the input catalogs contained a matching app icon set')")
                 else:
-                    print(f"  ✅ app icon set '{appicon_name}' has an image")
+                    print(f"  ✅ app icon set '{appicon_name}': {len(used)} image(s)")
+                    if all(i.get("idiom") == "universal" for i in entries) and deploy_major and deploy_major < 17:
+                        report(WARN, f"{appicon_name}.appiconset only has the single-size (universal 1024) icon while "
+                                     f"IPHONEOS_DEPLOYMENT_TARGET is {deploy} - older targets want the full size list")
+                for f in sorted(os.listdir(set_dir)):
+                    if f.endswith((".png", ".pngx")) and f not in used:
+                        report(WARN, f"{appicon_name}.appiconset/{f} is not referenced in Contents.json (actool ignores it)")
     else:
         report(WARN, "no Assets.xcassets found")
 
