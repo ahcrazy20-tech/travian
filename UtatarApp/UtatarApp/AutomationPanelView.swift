@@ -108,64 +108,66 @@ struct AutomationPanelView: View {
                     .padding(.horizontal)
 
                     // ===== الموارد الحقيقية =====
-                    RealResourcesCard(viewModel: viewModel)
+                    VStack(spacing: 16) {
+                        RealResourcesCard(viewModel: viewModel)
 
-                    // ===== الجنود في القرية =====
-                    HomeTroopsCard(viewModel: viewModel)
+                        // ===== الجنود في القرية =====
+                        HomeTroopsCard(viewModel: viewModel)
 
-                    // ===== التدريب (صفحة الثكنات) =====
-                    TrainingCard(viewModel: viewModel)
+                        // ===== التدريب (صفحة الثكنات) =====
+                        TrainingCard(viewModel: viewModel)
 
-                    // ===== القرى المكتشفة + التجسس =====
-                    VillagesCard(viewModel: viewModel)
+                        // ===== القرى المكتشفة + التجسس =====
+                        VillagesCard(viewModel: viewModel)
 
-                    // ===== تقارير التجسس =====
-                    SpyReportsCard(viewModel: viewModel)
+                        // ===== تقارير التجسس =====
+                        SpyReportsCard(viewModel: viewModel)
 
-                    // Quick actions
-                    HStack(spacing: 12) {
-                        QuickActionButton(title: "🔄 تحديث", color: .blue) {
-                            viewModel.refresh()
-                        }
+                        // Quick actions
+                        HStack(spacing: 12) {
+                            QuickActionButton(title: "🔄 تحديث", color: .blue) {
+                                viewModel.refresh()
+                            }
 
-                        QuickActionButton(title: "⚡ فعّال كله", color: .green) {
-                            viewModel.autoCollectResources = true
-                            viewModel.autoBuildQueue = true
-                            viewModel.autoTrainTroops = true
-                            viewModel.attackAlerts = true
-                            viewModel.resourceFullAlerts = true
-                            viewModel.buildCompleteAlerts = true
-                            if !viewModel.isAutomationEnabled {
-                                viewModel.toggleAutomation()
+                            QuickActionButton(title: "⚡ فعّال كله", color: .green) {
+                                viewModel.autoCollectResources = true
+                                viewModel.autoBuildQueue = true
+                                viewModel.autoTrainTroops = true
+                                viewModel.attackAlerts = true
+                                viewModel.resourceFullAlerts = true
+                                viewModel.buildCompleteAlerts = true
+                                if !viewModel.isAutomationEnabled {
+                                    viewModel.toggleAutomation()
+                                }
+                            }
+
+                            QuickActionButton(title: "⏹️ وقّف كله", color: .red) {
+                                viewModel.autoCollectResources = false
+                                viewModel.autoBuildQueue = false
+                                viewModel.autoTrainTroops = false
+                                if viewModel.isAutomationEnabled {
+                                    viewModel.toggleAutomation()
+                                }
                             }
                         }
+                        .padding(.horizontal)
 
-                        QuickActionButton(title: "⏹️ وقّف كله", color: .red) {
-                            viewModel.autoCollectResources = false
-                            viewModel.autoBuildQueue = false
-                            viewModel.autoTrainTroops = false
-                            if viewModel.isAutomationEnabled {
-                                viewModel.toggleAutomation()
-                            }
+                        if !viewModel.gameLog.isEmpty {
+                            Text(viewModel.gameLog)
+                                .font(.caption2)
+                                .foregroundColor(.yellow)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                                .background(Color.gray.opacity(0.2))
+                                .cornerRadius(8)
+                                .padding(.horizontal)
                         }
-                    }
-                    .padding(.horizontal)
 
-                    if !viewModel.gameLog.isEmpty {
-                        Text(viewModel.gameLog)
+                        Text("الصفحة الحالية: \(viewModel.pageKind.isEmpty ? "-" : viewModel.pageKind)")
                             .font(.caption2)
-                            .foregroundColor(.yellow)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
-                            .background(Color.gray.opacity(0.2))
-                            .cornerRadius(8)
-                            .padding(.horizontal)
+                            .foregroundColor(.gray)
+                            .padding(.bottom, 16)
                     }
-
-                    Text("الصفحة الحالية: \(viewModel.pageKind.isEmpty ? "-" : viewModel.pageKind)")
-                        .font(.caption2)
-                        .foregroundColor(.gray)
-                        .padding(.bottom, 16)
                 }
             }
             .frame(maxHeight: 620)
@@ -225,10 +227,17 @@ struct ResBar: View {
     let cap: Int
     let color: Color
 
+    private var amountText: String {
+        if cap > 0 {
+            return "\(label) \(value) / \(cap)"
+        }
+        return "\(label) \(value)"
+    }
+
     var body: some View {
         VStack(spacing: 2) {
             HStack {
-                Text("\(label) \(value)\(cap > 0 ? " / \(cap)" : "")")
+                Text(amountText)
                     .font(.caption2)
                     .foregroundColor(.white)
                 Spacer()
@@ -251,6 +260,10 @@ struct ResBar: View {
 struct HomeTroopsCard: View {
     @ObservedObject var viewModel: WebViewModel
 
+    private var totalTroops: Int {
+        viewModel.homeTroops.reduce(0) { $0 + $1.count }
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             HStack {
@@ -258,7 +271,7 @@ struct HomeTroopsCard: View {
                     .font(.caption)
                     .foregroundColor(.gray)
                 Spacer()
-                Text("المجموع: \(viewModel.homeTroops.reduce(0) { $0 + $1.count })")
+                Text("المجموع: \(totalTroops)")
                     .font(.caption2)
                     .foregroundColor(.white)
             }
