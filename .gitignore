@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+build/
+DerivedData/
+*.xcarchive
+.DS_Store
