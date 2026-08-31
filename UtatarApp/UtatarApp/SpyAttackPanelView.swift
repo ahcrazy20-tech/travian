@@ -183,8 +183,8 @@ struct SpyAttackPanelView: View {
                     VillageRow(village: village) {
                         // Scan village details
                         bot.scanVillageDetails(village) { updated in
-                            if let updated = updated {
-                                // Update village in list
+                            if let updated {
+                                bot.updateVillage(updated)
                             }
                         }
                     }
@@ -516,7 +516,7 @@ struct FarmingSettingsView: View {
                                 get: { Double(bot.farmingSettings.troopPercentage) },
                                 set: { bot.farmingSettings.troopPercentage = Int($0) }
                             ), in: 10...90, step: 5)
-                            .tint(.red)
+                            .utatarTint(.red)
                             
                             Text("هيبعت \(bot.farmingSettings.troopPercentage)% من جنودك")
                                 .font(.caption)
@@ -721,13 +721,5 @@ struct FarmingSettingsView: View {
                 }
             }
         }
-    }
-}
-
-// MARK: - Extension for manual attack
-
-extension SpyAttackBot {
-    func sendAttackManually(to target: AttackTarget) {
-        sendAttack(to: target)
     }
 }

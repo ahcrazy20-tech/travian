@@ -1,0 +1,103 @@
+name: 📲 Build IPA for TrollStore
+
+# Short, self-contained: archive → ad-hoc sign → UtatarApp.ipa → Release asset
+# (a real .ipa file, NOT a zip wrapper). Create this file as
+# .github/workflows/ipa.yml  — you do not have to edit anything else.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    name: 📦 UtatarApp.ipa
+    runs-on: macos-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write        # needed to publish the Release with the .ipa
+    env:
+      PROJECT: UtatarApp/UtatarApp.xcodeproj
+      SCHEME: UtatarApp
+      TAG: trollstore-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Archive for the device (unsigned)
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          xcodebuild clean archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -destination 'generic/platform=iOS' \
+            -configuration Release \
+            -archivePath build/App.xcarchive \
+            -derivedDataPath build/DD \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee build/build.log
+
+      - name: 🧯 Show the real errors if the build failed
+        if: failure()
+        run: |
+          grep -nE "error:|fatal error:|The following build commands failed" build/build.log | head -40 || true
+          tail -25 build/build.log || true
+
+      - name: 📦 Package UtatarApp.ipa
+        run: |
+          set -euo pipefail
+          APP="$(find build/App.xcarchive/Products/Applications -maxdepth 1 -name '*.app' | head -n1)"
+          if [ -z "$APP" ]; then echo "❌ no .app in the archive" >&2; exit 1; fi
+
+          # TrollStore wants ad-hoc (or no) signature — this avoids "Code Signature Invalid"
+          codesign --force --deep --sign - --timestamp=none "$APP"
+          codesign -dvv "$APP" 2>&1 | sed -n 's/^.*=//p;1,4p' | head -6 || true
+
+          # An .ipa is literally a zip whose ROOT contains Payload/<App>.app
+          rm -rf build/pkg && mkdir -p build/pkg/Payload
+          cp -R "$APP" build/pkg/Payload/
+          (cd build/pkg && zip -qryX "$GITHUB_WORKSPACE/UtatarApp.ipa" Payload)
+
+          echo "--- layout (must start with Payload/UtatarApp.app/) ---"
+          unzip -l UtatarApp.ipa | head -8
+          echo "IPA contains $(unzip -l UtatarApp.ipa | tail -1 | awk '{print $2}') files"
+
+      - name: 🚀 Publish as a Release asset (direct .ipa download)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          LINK="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/UtatarApp.ipa"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "UtatarApp — TrollStore IPA" --prerelease \
+              --target "$GITHUB_SHA" \
+              --notes "Install on the iPhone with TrollStore / TrolStore. Needs iOS 15.0 or newer.
+
+          Direct file: $LINK"
+          fi
+          gh release upload "$TAG" UtatarApp.ipa --clobber
+          {
+            echo "## 📲 This is your IPA (a real \`.ipa\`, no zip)"
+            echo
+            echo "\`\`\`"
+            echo "$LINK"
+            echo "\`\`\`"
+            echo
+            echo "1. Long-press the link on the iPhone → *Save to Files* (or open it in Safari)"
+            echo "2. TrollStore/TrolStore → install from that file/URL"
+            echo "3. Re-run this workflow any time — the link always serves the newest build"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ $LINK"
+
+      - name: 📤 Also keep the .ipa as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UtatarApp-ipa-file
+          path: UtatarApp.ipa
+          if-no-files-found: error
+          retention-days: 30

@@ -50,7 +50,7 @@ struct AutomationPanelView: View {
                         get: { viewModel.isAutomationEnabled },
                         set: { _ in viewModel.toggleAutomation() }
                     ))
-                    .tint(.green)
+                    .utatarTint(.green)
                 }
                 .padding(.horizontal)
                 
@@ -188,7 +188,7 @@ struct AutomationToggleRow: View {
             Spacer()
             
             Toggle("", isOn: $isOn)
-                .tint(color)
+                .utatarTint(color)
                 .labelsHidden()
         }
         .padding(.vertical, 4)
