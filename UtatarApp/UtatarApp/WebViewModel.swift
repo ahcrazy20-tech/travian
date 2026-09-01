@@ -69,6 +69,15 @@ class WebViewModel: NSObject, ObservableObject {
     @Published var trainIntervalMin: Int = 10 { didSet { UD.set(trainIntervalMin, forKey: "trainIntervalMin") } }
     private var nextQueuedTrainAt = Date.distantPast
     private var barracksHintShown = false
+    /// أول مرة بنعرف فيها إن الموارد كانت ناقصة (نمنع سبام السجل)
+    private var lastShortageLogAt = Date.distantPast
+    /// أدق مهمة تدريب معلقة — النظام عمره ما ينسى التدريب حتى مع فترات الهدوء
+    private func ensureTrainQueued(withinMinutes mi: Int) {
+        let next = Date().addingTimeInterval(TimeInterval(mi * 60))
+        if nextQueuedTrainAt < Date() || next < nextQueuedTrainAt {
+            nextQueuedTrainAt = next
+        }
+    }
     /// خلايا الخريطة اللي البوت زارها (dorf3?id=) — عشان ما يزورش نفس الخلية تاني
     private var exploredCells = Set<String>()
     private var lastExploreAt = Date.distantPast
@@ -229,6 +238,10 @@ class WebViewModel: NSObject, ObservableObject {
             injectAutoBuild()
         }
         if autoTrainTroops {
+            // نبّاه لو المهمة المعلقة فات وقتها (الجهاز نام/الشبكة قطعت): أقرب فرصة تتدرب
+            if nextQueuedTrainAt < Date().addingTimeInterval(-10 * 60) {
+                nextQueuedTrainAt = Date()
+            }
             injectAutoTrain()
         }
         if attackAlerts {
@@ -802,9 +815,9 @@ class WebViewModel: NSObject, ObservableObject {
                     }
                     self.barracksHintShown = false
                     self.intervalNoteShown = false
-                    self.nextQueuedTrainAt = Date().addingTimeInterval(TimeInterval(self.trainIntervalMin * 60))
+                    self.ensureTrainQueued(withinMinutes: self.trainIntervalMin)
                     self.markSubmitBusy()
-                    self.logActivity("🐴 تدريب مجدول: \(msg) — الجاية بعد \(self.trainIntervalMin) دقيقة")
+                    self.logActivity("🐴 تدريب مجدول: \(msg) — طلبت تاني بعد \(self.trainIntervalMin) دقيقة ✅")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
                         guard let self = self else { return }
                         self.engine.trainCheck { state in
@@ -817,11 +830,13 @@ class WebViewModel: NSObject, ObservableObject {
                         }
                     }
                 } else if msg.contains("مش كفاية") {
-                    // واقفين في الثكنة والموارد خلصت: مفيش لازمة نبعث فاضي أو نتنقل — نستنى وننجح بعدين
-                    let wait = max(1, min(self.trainIntervalMin, 5))
-                    self.nextQueuedTrainAt = Date().addingTimeInterval(TimeInterval(wait * 60))
-                    self.intervalNoteShown = false
-                    self.logActivity("🌵 \(msg) — هجرب تاني بعد \(wait) دقيقة")
+                    // الموارد خلصت: نعيد الجدولة بصمت — من غير تنقل ولا رفرش. الدورة الجاية هتجرب تاني.
+                    self.ensureTrainQueued(withinMinutes: max(1, min(self.trainIntervalMin, 5)))
+                    if Date().timeIntervalSince(self.lastShortageLogAt) > 120 {
+                        self.lastShortageLogAt = Date()
+                        let mins = max(1, min(self.trainIntervalMin, 5))
+                        self.logActivity("🌵 \(msg) — في محاولة تانية بعد \(mins) دقيقة ✅")
+                    }
                 } else {
                     self.gotoBarracks(failReason: msg)
                 }
