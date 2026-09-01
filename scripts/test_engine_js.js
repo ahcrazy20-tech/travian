@@ -246,9 +246,9 @@ const sendForm = t('form', { action: 'a2b' }, [
   ]),
   t('input', { name: 'x' }),
   t('input', { name: 'y' }),
-  t('input', { name: 'c', type: 'radio', value: '1' }),
-  t('input', { name: 'c', type: 'radio', value: '2' }),
-  t('input', { name: 'c', type: 'radio', value: '3' }),
+  t('label', {}, [t('input', { name: 'c', type: 'radio', value: '2' }), t('span', {}, [], 'تعزيز')]),
+  t('label', {}, [t('input', { name: 'c', type: 'radio', value: '3' }), t('span', {}, [], 'هجوم عادي')]),
+  t('label', {}, [t('input', { name: 'c', type: 'radio', value: '4' }), t('span', {}, [], 'نهب')]),
   t('button', { type: 'submit' }, [], 'إرسال'),
 ]);
 const xi = sendForm.children.find(c => c.getAttribute('name') === 'x');
@@ -258,7 +258,8 @@ axeInp.value = ''; scoutInp.value = '';
 const sendJS = extractFunc('sendTroopsJS')
   .split('\\(x)').join('12').split('\\(y)').join('34')
   .replace('var pairs=\\(arr);', 'var pairs=[[14,3]];')
-  .replace('var modeVals=\\(mv);', 'var modeVals=[3,4,2];');
+  .replace('var modeVals=\\(mv);', 'var modeVals=[4,3];')
+  .split('\\(rx)').join('"\\u0646\\u0647\\u0628|raid"');
 const scoutRes = JSON.parse(eval(sendJS));
 console.log('SCOUT:', JSON.stringify(scoutRes));
 if (!scoutRes.sent) throw new Error('FAIL scout send: ' + scoutRes.message);
@@ -267,10 +268,10 @@ if (axeInp.value) throw new Error('FAIL axe must stay empty');
 if (xi.value !== '12' || yi.value !== '34') throw new Error('FAIL coords not filled: ' + xi.value + ',' + yi.value);
 const radios = sendForm.querySelectorAll('input[name="c"]');
 const raidClicked = radios.find(r => r.clicked);
-if (!raidClicked || raidClicked.getAttribute('value') !== '3') {
+if (!raidClicked || raidClicked.getAttribute('value') !== '4') {
   console.log('DBG radios found:', radios.length, radios.map(r => ({v: r.getAttribute('value'), val: r.value, clicked: r.clicked})));
   console.log('DBG modeVals line:', (sendJS.split('\n').find(l => l.includes('modeVals')) || '').trim());
-  throw new Error('FAIL raid radio value 3 not clicked');
+  throw new Error('FAIL raid radio value 4 (نهب) not clicked');
 }
 if (!sendForm.children.find(c => c.clicked)) throw new Error('FAIL send button not clicked');
 
@@ -316,4 +317,4 @@ setTimeout(() => {
   console.log('TRAINCHECK:', st);
   if (st !== 'gone') throw new Error('FAIL train beacon state: ' + st);
   console.log('\nALL JS TESTS PASSED ✅');
-}, 1900);
+}, 4600);

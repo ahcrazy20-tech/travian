@@ -539,13 +539,12 @@ class WebViewModel: NSObject, ObservableObject {
     private func checkAlertAndRetreat() {
         guard autoRetreatEnabled, pendingAction == nil else { return }
         guard pageKind == "dorf1" || pageKind == "dorf2" else { return }
-        engine.readAlert { [weak self] hits in
-            guard let self = self, !hits.isEmpty else { return }
+        engine.readAlert { [weak self] incoming, hits in
+            guard let self = self, incoming, !hits.isEmpty else { return }
             DispatchQueue.main.async {
-                self.logActivity("⚠️ رصدت علامة تنبيه: \(hits.joined(separator: "، "))")
-                if self.autoRetreatEnabled {
-                    self.startRetreat(auto: true)
-                }
+                guard self.autoRetreatEnabled, self.pendingAction == nil else { return }
+                self.logActivity("🚨 هجوم جاي على القرية! (\(hits.joined(separator: "، "))) — بجهز الهروب")
+                self.startRetreat(auto: true)
             }
         }
     }
@@ -740,7 +739,7 @@ class WebViewModel: NSObject, ObservableObject {
                     self.trainCooldownUntil = Date().addingTimeInterval(15 * 60)
                     self.logActivity("🐴 تدريب تلقائي: \(msg) — التدريب الجاي بعد ربع ساعة")
                     // التحقق بعد ثانيتين: لو الفورم لسه مكانها يبقى اللعبة رفضت — نسجل ردها
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.3) { [weak self] in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
                         guard let self = self else { return }
                         self.engine.trainCheck { state in
                             DispatchQueue.main.async {

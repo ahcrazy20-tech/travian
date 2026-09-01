@@ -579,14 +579,19 @@ final class GameEngine: NSObject {
             if i < units.count - 1 { arr += "," }
         }
         arr += "]"
-        // قيم الراديو البديلة: نهب 3 (وبدائل 4/2) — هجوم 2 — تعزيز 1
+        // الحقيقة من مصدر محرك EBDA T4 (اللي لعبتك مبنية عليه):
+        // c=2 تعزيز — c=3 هجوم عادي — c=4 نهب. (ترافيان الأصلي: 1/2/3)
+        // بنطابق بالنص الأول (الأنجح) وقيم محرك EBDA كبديل أخير.
+        var labelRx = ""
         var modeVals: [Int]
         switch mode {
-        case 3: modeVals = [3, 4, 2]
-        case 2: modeVals = [2, 3]
-        default: modeVals = [1, 2]
+        case 3: labelRx = "\\u0646\\u0647\\u0628|\\u0633\\u0631\\u0642\\u0629|raid|plunder"; modeVals = [4, 3]
+        case 2: labelRx = "\\u0647\\u062c\\u0648\\u0645|\\u0627\\u0639\\u062a\\u062f\\u0627\\u0621|attack"; modeVals = [3, 2]
+        default: labelRx = "\\u062a\\u0639\\u0632\\u064a\\u0632|\\u062f\\u0639\\u0645|reinfor|support"; modeVals = [2, 1]
         }
         let mv = "[" + modeVals.map(String.init).joined(separator: ",") + "]"
+        let rx = '"' + labelRx + '"'
+        
         return """
         (function(){
           try{
@@ -623,21 +628,34 @@ final class GameEngine: NSObject {
               }
             });
             if(filled===0) return JSON.stringify({sent:false,message:'مفيش مدخلات للجنود المطلوبين في الفورم'});
-            // اختيار نوع الهجوم: بنمشي على الأولويات بالترتيب (نهب قبل هجوم مثلاً)
+            // اختيار نوع الهجوم: بالتسمية العربي/الإنجليزي الأول (أدق)، وبعدين قيم EBDA
             var modeVals=\(mv);
+            var labelRx=new RegExp(\(rx), "i");
             var modeRadio=null;
-            for(var mi=0; mi<modeVals.length && !modeRadio; mi++){
-              form.querySelectorAll('input[name="c"]').forEach(function(r){
-                if(modeRadio) return;
-                if(parseInt(r.value,10)===modeVals[mi]) modeRadio=r;
-              });
+            var radios=[];
+            form.querySelectorAll('input[name="c"]').forEach(function(r){ radios.push(r); });
+            function labelText(r){
+              var l = r.closest ? r.closest('label') : null;
+              var t = l ? (l.textContent||'') : '';
+              if(!t){ var p=r.parentElement; t = p ? (p.textContent||'') : ''; }
+              return t.trim();
             }
-            if(modeRadio) modeRadio.click();
+            for(var ri=0; ri<radios.length && !modeRadio; ri++){
+              var tx=labelText(radios[ri]);
+              if(tx && labelRx.test(tx)) modeRadio=radios[ri];
+            }
+            for(var mi=0; mi<modeVals.length && !modeRadio; mi++){
+              for(var ri2=0; ri2<radios.length && !modeRadio; ri2++){
+                if(parseInt(radios[ri2].value,10)===modeVals[mi]) modeRadio=radios[ri2];
+              }
+            }
+            var viaLabel = !!(modeRadio && labelRx.test(labelText(modeRadio)));
+            if(modeRadio){ modeRadio.click(); }
             var btn=form.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
             if(btn){ btn.click(); }
             else if(form.requestSubmit){ form.requestSubmit(); }
             else { return JSON.stringify({sent:false,message:'لا يوجد زر إرسال'}); }
-            return JSON.stringify({sent:true,message:'انطلقت القوات ('+filledNames.join(', ')+')'});
+            return JSON.stringify({sent:true,message:'انطلقت القوات ('+filledNames.join(', ')+')'+(viaLabel?' [بالنص]':' [بالقيمة]')});
           }catch(e){ return JSON.stringify({sent:false,message:e.message}); }
         })();
         """
@@ -689,9 +707,13 @@ final class GameEngine: NSObject {
             var form=null;
             document.querySelectorAll('form').forEach(function(f){
               if(form || isSendForm(f)) return;
+              var act=f.getAttribute('action')||'';
+              // فورم التدريب بيتبعت لـ build — فورم الإرجاع/الإرسال بتتبعت لـ a2b: منفضلش نمسها
+              if(act.indexOf('a2b')>=0) return;
               var has=false;
               f.querySelectorAll('input[name]').forEach(function(i){
-                if(!has && /^t(f)?\\[\\d+\\]$/.test(i.getAttribute('name')||'')) has=true;
+                var nm=i.getAttribute('name')||'';
+                if(!has && (/^t(f)?\\[\\d+\\]$/.test(nm) || /^t\\d{1,2}$/.test(nm))) has=true;
               });
               if(has) form=f;
             });
@@ -706,7 +728,7 @@ final class GameEngine: NSObject {
             var filled=0, names=[];
             form.querySelectorAll('input[name]').forEach(function(inp){
               var nm=inp.getAttribute('name')||'';
-              if(!/^t(f)?\\[\\d+\\]$/.test(nm)) return;
+              if(!/^t(f)?\\[\\d+\\]$/.test(nm) && !/^t\\d{1,2}$/.test(nm)) return;
               var max=parseInt(inp.getAttribute('max'),10);
               var v=\(count);
               if(!isNaN(max)&&max>0&&v>max) v=max;
@@ -718,7 +740,18 @@ final class GameEngine: NSObject {
             if(btn){ btn.click(); }
             else if(form.requestSubmit){ form.requestSubmit(); }
             else { return JSON.stringify({ok:false,message:'لا يوجد زر تدريب'}); }
-            // بعد ثانية ونص: لو الفورم لسه موجود يبقى اللعبة ما قبلتش التدريب
+            // لو التنقل بدأ فعلاً نمنع أي محاولة تانية (عشان ما نكررش التدريب)
+            try{ window.addEventListener('pagehide', function(){ window.__utatarNav=true; }, {once:true}); }catch(e4){}
+            // لو الـ JS بتاع اللعبة منع الإرسال الأول: نعيد المحاولة بإرسال أصلي حقيقي
+            setTimeout(function(){
+              try{
+                if(!window.__utatarNav && document.body && document.body.contains(form)){
+                  if(btn && form.requestSubmit){ form.requestSubmit(btn); }
+                  else { btn ? btn.click() : (form.submit ? form.submit() : null); }
+                }
+              }catch(e3){}
+            }, 1500);
+            // بعد 4 ثواني: لو الفورم لسه موجود يبقى اللعبة رفضت فعلاً — نسجل ردها
             setTimeout(function(){
               try{
                 var alive = document.body && document.body.contains(form);
@@ -729,7 +762,7 @@ final class GameEngine: NSObject {
                 });
                 window.__utatarTrainCheck = alive ? ('still'+errs) : 'gone';
               }catch(e2){}
-            }, 1600);
+            }, 4000);
             return JSON.stringify({ok:true,message:'بدأ التدريب ('+names.join(', ')+')'});
           }catch(e){ return JSON.stringify({ok:false,message:e.message}); }
         })();
@@ -776,20 +809,40 @@ final class GameEngine: NSObject {
     """
 
     /// كاشف إنذار الهجوم: بيدور على أيقونات/عناصر التحذير الشائعة.
-    func readAlert(completion: @escaping ([String]) -> Void) {
+    func readAlert(completion: @escaping (Bool, [String]) -> Void) {
         runJSON(Self.alertJS) { obj in
-            completion(obj?["hits"] as? [String] ?? [])
+            let inc = (obj?["incoming"] as? Bool) ?? false
+            completion(inc, obj?["hits"] as? [String] ?? [])
         }
     }
 
     static let alertJS = """
     (function(){
       var hits=[];
-      var sels=['img[src*="alert"]','img[src*="warn"]','img[src*="attack"]','img[src*="alarm"]','[id*="alarm"]','[class*="alarm"]','[class*="incoming"]','[class*="attack_warn"]'];
-      sels.forEach(function(s){
-        try{ var n=document.querySelectorAll(s).length; if(n>0) hits.push(s+' x'+n); }catch(e){}
+      var incoming=false;
+      // الحقيقة من مصدر المحرك (movement.tpl):
+      // هجوم قادم عليك = <img class="att1"> + <span class="a1"> جوه div.movements
+      // (att2/a2 = نهب قادم، att3 = راجعين). دي أدق إشارة ومصدرها كود اللعبة نفسه.
+      var incomingSels=['.movements img.att1','#movements img.att1','.movements img.att2','#movements img.att2','.movements span.a1','.movements span.a2'];
+      incomingSels.forEach(function(sel){
+        try{
+          var els=document.querySelectorAll(sel);
+          if(els.length>0){ incoming=true; hits.push(sel+' x'+els.length); }
+        }catch(e){}
       });
-      return JSON.stringify({hits:hits});
+      // بدائل عامة (لو النسخة معدلة): عناصر تحذير معروفة
+      var sels=['[class*="incoming"]','[class*="attack_warn"]','img[src*="alarm"]','[id*="alarm"]','img[src*="warn"]'];
+      sels.forEach(function(sel){
+        try{
+          var els=document.querySelectorAll(sel);
+          if(els.length>0){
+            var t=(els[0].textContent||'').trim();
+            if(/هجوم|att/i.test(t+' '+sel)) incoming=true;
+            hits.push(sel+' x'+els.length);
+          }
+        }catch(e){}
+      });
+      return JSON.stringify({incoming:incoming,hits:hits});
     })();
     """
 
