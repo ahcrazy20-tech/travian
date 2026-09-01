@@ -164,7 +164,7 @@ class WebViewModel: NSObject, ObservableObject {
         // Collect game state
         collectGameState()
         refreshGameData()
-        advanceSpyIfNeeded()
+        advancePendingAction()
         // Run enabled automations
         if autoCollectResources {
             injectAutoCollect()
@@ -346,6 +346,26 @@ class WebViewModel: NSObject, ObservableObject {
         refreshGameData()
         advancePendingAction()
         recordCurrentPageIfNeeded()
+    }
+
+    /// مسجل الصفحات الأوتوماتيكي: يسجل كل صفحة جديدة (بدون تكرار) عشان نحلل الـ DOM الحقيقي.
+    func recordCurrentPageIfNeeded() {
+        guard let url = webView?.url?.absoluteString else { return }
+        let base = url.components(separatedBy: "?").first ?? url
+        let lastBase = lastRecordedURL.components(separatedBy: "?").first ?? lastRecordedURL
+        guard base != lastBase else { return }
+        lastRecordedURL = url
+        engine.runPageRecord { [weak self] text in
+            guard let self = self, !text.isEmpty else { return }
+            DispatchQueue.main.async {
+                let sep = self.pageRecords.isEmpty ? "" : "\n──── صفحة جديدة ──────\n"
+                var buf = self.pageRecords + sep + text
+                if buf.count > 9000 {
+                    buf = String(buf.suffix(9000))
+                }
+                self.pageRecords = buf
+            }
+        }
     }
 
     /// تنفيذ المهمة المعلقة لما نكون على صفحة إرسال الجنود.
