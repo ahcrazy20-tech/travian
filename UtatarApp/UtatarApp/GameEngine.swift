@@ -563,10 +563,18 @@ final class GameEngine: NSObject {
               return 0;
             }
             var form=null;
+            // الأول: فورم إرسال حقيقية (فيها إحداثيات x/y + مدخلات جنود)
             document.querySelectorAll('form').forEach(function(f){
-              if(!form && f.querySelector('input[name^="t"]')) form=f;
+              if(form) return;
+              if(f.querySelector('input[name="x"]') && f.querySelector('input[name="y"]') && f.querySelector('input[name^="t"]')) form=f;
             });
-            if(!form) form=document.querySelector('form[action*="a2b"], form[action*="send"], form[action*="troop"]');
+            // بعد كده: أي فورم فيها مدخلات جنود
+            if(!form){
+              document.querySelectorAll('form').forEach(function(f){
+                if(form) return;
+                if(f.querySelector('input[name^="t"]')) form=f;
+              });
+            }
             if(!form) return JSON.stringify({sent:false,message:'افتح صفحة إرسال الجنود (نقطة التجمع) الأول'});
             var scout=null;
             form.querySelectorAll('input[name]').forEach(function(inp){

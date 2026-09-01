@@ -41,7 +41,7 @@ struct AutomationPanelView: View {
                             Text("تشغيل الأوتوماتك")
                                 .font(.body)
                                 .foregroundColor(.white)
-                            Text(viewModel.isAutomationEnabled ? "شغّال ✅" : "موقف ❌")
+                            Text(viewModel.isAutomationEnabled ? "شغّال ✅ — بيفضل شغال في الخلفية 🎵" : "موقف ❌")
                                 .font(.caption)
                                 .foregroundColor(.gray)
                         }
@@ -78,8 +78,16 @@ struct AutomationPanelView: View {
                         AutomationToggleRow(
                             icon: "person.3.fill",
                             title: "تدريب جنود تلقائي",
-                            subtitle: "يدرب جنود لما يقدر",
+                            subtitle: "يدرب جنود لما يقدر — فوراً لما تفعّله",
                             isOn: $viewModel.autoTrainTroops
+                        )
+
+                        AutomationToggleRow(
+                            icon: "eye.fill",
+                            title: "تجسس تلقائي",
+                            subtitle: "يبعت كشافين للقرى وحدة ورا التانية",
+                            isOn: $viewModel.autoSpyEnabled,
+                            color: .purple
                         )
 
                         AutomationToggleRow(

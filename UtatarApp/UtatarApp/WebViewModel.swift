@@ -10,13 +10,15 @@ class WebViewModel: NSObject, ObservableObject {
     @Published var alertMessage = ""
     @Published var isAutomationEnabled = false
     
-    // Automation settings
-    @Published var autoCollectResources = false
-    @Published var autoBuildQueue = false
-    @Published var autoTrainTroops = false
-    @Published var attackAlerts = true
-    @Published var resourceFullAlerts = true
-    @Published var buildCompleteAlerts = true
+    // Automation settings (محفوظة بين الجلسات في UserDefaults)
+    @Published var autoCollectResources: Bool = false { didSet { UD.set(autoCollectResources, forKey: "autoCollect") } }
+    @Published var autoBuildQueue: Bool = false { didSet { UD.set(autoBuildQueue, forKey: "autoBuild") } }
+    @Published var autoTrainTroops: Bool = false { didSet { UD.set(autoTrainTroops, forKey: "autoTrain"); if autoTrainTroops { injectAutoTrain() } } }
+    @Published var autoSpyEnabled: Bool = false { didSet { UD.set(autoSpyEnabled, forKey: "autoSpy") } }
+    @Published var attackAlerts: Bool = true { didSet { UD.set(attackAlerts, forKey: "attackAlerts") } }
+    @Published var resourceFullAlerts: Bool = true { didSet { UD.set(resourceFullAlerts, forKey: "resFullAlerts") } }
+    @Published var buildCompleteAlerts: Bool = true { didSet { UD.set(buildCompleteAlerts, forKey: "buildAlerts") } }
+    private let UD = UserDefaults.standard
     
     // Game state
     @Published var woodAmount: String = "0"
@@ -59,6 +61,20 @@ class WebViewModel: NSObject, ObservableObject {
     
     override init() {
         super.init()
+        // استرجاع الإعدادات المحفوظة وإعادة تشغيل الأوتوماتك لو كان شغّال
+        autoCollectResources = UD.bool(forKey: "autoCollect")
+        autoBuildQueue = UD.bool(forKey: "autoBuild")
+        autoSpyEnabled = UD.bool(forKey: "autoSpy")
+        attackAlerts = UD.object(forKey: "attackAlerts") == nil ? true : UD.bool(forKey: "attackAlerts")
+        resourceFullAlerts = UD.object(forKey: "resFullAlerts") == nil ? true : UD.bool(forKey: "resFullAlerts")
+        buildCompleteAlerts = UD.object(forKey: "buildAlerts") == nil ? true : UD.bool(forKey: "buildAlerts")
+        if UD.bool(forKey: "autoTrain") {
+            autoTrainTroops = true
+        }
+        if UD.bool(forKey: "automationOn") {
+            isAutomationEnabled = true
+            logActivity("♻️ رجعنا — الأوتوماتك شغّال تاني من حيث وقف")
+        }
         setupTimer()
     }
     
@@ -89,11 +105,14 @@ class WebViewModel: NSObject, ObservableObject {
     
     func toggleAutomation() {
         isAutomationEnabled.toggle()
+        UD.set(isAutomationEnabled, forKey: "automationOn")
         if isAutomationEnabled {
             startAutomation()
-            sendNotification(title: "أوتوماتك شغّال", body: "المساعد الأوتوماتك شغّال دلوقتي 🎮")
+            KeepAlive.shared.start()
+            sendNotification(title: "أوتوماتك شغّال", body: "المساعد شغّال دلوقتي 🎮 — ويفضل شغال في الخلفية")
         } else {
             stopAutomation()
+            KeepAlive.shared.stop()
             sendNotification(title: "أوتوماتك واقف", body: "المساعد الأوتوماتك اتقفل")
         }
     }
@@ -118,7 +137,6 @@ class WebViewModel: NSObject, ObservableObject {
         collectGameState()
         refreshGameData()
         advanceSpyIfNeeded()
-
         // Run enabled automations
         if autoCollectResources {
             injectAutoCollect()
@@ -135,6 +153,24 @@ class WebViewModel: NSObject, ObservableObject {
         if resourceFullAlerts {
             checkResourcesFull()
         }
+        if autoSpyEnabled {
+            autoSpyNext()
+        }
+    }
+
+    /// التجسس التلقائي: كل دورة يبعت كشافين للقرية اللي بعد الحالي (دورياً).
+    private var spyCursor = 0
+    private func autoSpyNext() {
+        guard pendingSpyVillage == nil, !mapVillages.isEmpty else {
+            if mapVillages.isEmpty {
+                logActivity("🤖 التجسس التلقائي: افتح الخريطة الأول عشان أجمع القرى")
+            }
+            return
+        }
+        spyCursor = (spyCursor + 1) % mapVillages.count
+        let target = mapVillages[spyCursor]
+        logActivity("🤖 تجسس تلقائي على: \(target.name)")
+        startSpy(target)
     }
 
     // MARK: - القراءة الحقيقية من اللعبة (GameEngine)
