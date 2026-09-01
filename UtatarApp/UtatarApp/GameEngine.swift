@@ -590,7 +590,7 @@ final class GameEngine: NSObject {
         default: labelRx = "\\u062a\\u0639\\u0632\\u064a\\u0632|\\u062f\\u0639\\u0645|reinfor|support"; modeVals = [2, 1]
         }
         let mv = "[" + modeVals.map(String.init).joined(separator: ",") + "]"
-        let rx = '"' + labelRx + '"'
+        let rx = "\\"" + labelRx + "\\""
         
         return """
         (function(){
