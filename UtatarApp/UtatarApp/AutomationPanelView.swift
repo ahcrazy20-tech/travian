@@ -138,6 +138,9 @@ struct AutomationPanelView: View {
                         // ===== سجل الحركات =====
                         ActivityCard(viewModel: viewModel)
 
+                        // ===== مسجل الصفحات (أوتوماتك) =====
+                        PageRecordsCard(viewModel: viewModel)
+
                         // Quick actions
                         HStack(spacing: 12) {
                             QuickActionButton(title: "🔄 تحديث", color: .blue) {
@@ -570,6 +573,68 @@ struct SpyReportsCard: View {
                 ForEach(viewModel.spyReports) { report in
                     SpyReportRow(report: report)
                 }
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - كارت مسجل الصفحات
+
+struct PageRecordsCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("📄 مسجل الصفحات (أوتوماتك)")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                if !viewModel.pageRecords.isEmpty {
+                    Button(action: {
+                        UIPasteboard.general.string = viewModel.pageRecords
+                        viewModel.gameLog = "📋 اتنسخ سجل الصفحات — الصقه في المحادثة"
+                    }) {
+                        Text("📋 نسخ الكل")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.green.opacity(0.8))
+                            .cornerRadius(6)
+                    }
+                    Button(action: { viewModel.pageRecords = "" }) {
+                        Text("مسح")
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+
+            Text("المسجل ده بيشتغل لوحده — امشي في اللعبة عادي (الثكنة، نقطة التجمع، الخريطة، إرسال جنود) وكل صفحة هتتسجل هنا. لما تخلص دوس نسخ الكل وابعته.")
+                .font(.caption2)
+                .foregroundColor(.gray)
+
+            if viewModel.pageRecords.isEmpty {
+                Text("لسه فاضي — امشي في اللعبة شوية وهتلاقي كل صفحة اتسجلت")
+                    .font(.caption2)
+                    .foregroundColor(.gray.opacity(0.8))
+            } else {
+                ScrollView {
+                    Text(viewModel.pageRecords)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.green)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(6)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 200)
+                .background(Color.black.opacity(0.6))
+                .cornerRadius(8)
             }
         }
         .padding()

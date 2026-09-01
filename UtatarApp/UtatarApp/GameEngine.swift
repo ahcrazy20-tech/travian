@@ -842,6 +842,53 @@ final class GameEngine: NSObject {
     })();
     """
 
+    // MARK: - المسجل التلقائي للصفحات
+
+    func runPageRecord(completion: @escaping (String) -> Void) {
+        runJSON(Self.pageRecordJS) { obj in
+            let lines = obj?["lines"] as? [Any] ?? []
+            let text = lines.compactMap { $0 as? String }.joined(separator: "\n")
+            completion(text)
+        }
+    }
+
+    static let pageRecordJS = """
+    (function(){
+      var out=[];
+      out.push('URL: '+location.href);
+      out.push('TITLE: '+(document.title||''));
+      document.querySelectorAll('form').forEach(function(f,fi){
+        var parts=[];
+        f.querySelectorAll('input,button').forEach(function(i){
+          if(parts.length>=12) return;
+          var s=(i.getAttribute('name')||'?')+'/'+(i.getAttribute('type')||i.tagName.toLowerCase());
+          var mx=i.getAttribute('max')||i.getAttribute('data-max');
+          if(mx) s+='[max='+mx+']';
+          if(i.getAttribute('type')=='submit'||i.tagName.toLowerCase()=='button'){
+            var tx=(i.textContent||i.value||'').trim();
+            if(tx) s+='="'+tx.substring(0,15)+'"';
+          }
+          parts.push(s);
+        });
+        out.push('F'+fi+' '+(f.getAttribute('action')||'-')+' :: '+parts.join(' | '));
+      });
+      var u=0;
+      document.querySelectorAll('img').forEach(function(im){
+        if(u>=10) return;
+        var m=((im.getAttribute('class')||'')+' '+(im.getAttribute('src')||'')).match(/u(\\d{1,2})/);
+        if(m){ out.push('IMG u'+m[1]+' "'+((im.getAttribute('title')||im.getAttribute('alt')||'').substring(0,18))+'"'); u++; }
+      });
+      var seen={}, l=0;
+      document.querySelectorAll('a[href]').forEach(function(a){
+        if(l>=10) return;
+        var h=a.getAttribute('href')||'';
+        if(!/karte|map|a2b|build|berichte|spy|send|dorf|attack/.test(h)||seen[h]) return;
+        seen[h]=1; out.push('A '+h.substring(0,70)); l++;
+      });
+      return JSON.stringify({lines:out});
+    })();
+    """
+
     // MARK: - Helpers
 
     static func int(_ v: Any?) -> Int {

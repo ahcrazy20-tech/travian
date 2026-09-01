@@ -39,6 +39,9 @@ class WebViewModel: NSObject, ObservableObject {
     @Published var isScanningMap = false
     @Published var diagnosticsOutput: String = ""
     @Published var activityLog: [String] = []
+    /// كل صفحة بتتفتح تتسجل هنا أوتوماتك (بتفضل محفوظة حتى لو التطبيق اتقفل).
+    @Published var pageRecords: String = "" { didSet { UD.set(pageRecords, forKey: "pageRecords") } }
+    private var lastRecordedURL = ""
     private var pendingSpyVillage: MapVillage?
 
     /// سجل كل حركة بيعملها المحرك — بيظهر في البانل وبيساعدنا نعرف مين اللي فشل وليه.
@@ -75,6 +78,7 @@ class WebViewModel: NSObject, ObservableObject {
             isAutomationEnabled = true
             logActivity("♻️ رجعنا — الأوتوماتك شغّال تاني من حيث وقف")
         }
+        pageRecords = UD.string(forKey: "pageRecords") ?? ""
         setupTimer()
     }
     
@@ -181,6 +185,7 @@ class WebViewModel: NSObject, ObservableObject {
         guard let urlString = webView?.url?.absoluteString else { return }
         let kind = GameEngine.pageKind(from: urlString)
         pageKind = kind
+        recordCurrentPageIfNeeded()
 
         engine.readResources { [weak self] res in
             guard let self = self, let res = res else { return }
@@ -302,6 +307,27 @@ class WebViewModel: NSObject, ObservableObject {
     func handlePageLoaded() {
         refreshGameData()
         advanceSpyIfNeeded()
+        recordCurrentPageIfNeeded()
+    }
+
+    /// يسجل الصفحة الحالية لو لسه متسجلتش (بينفع مع أي تنقلة حتى من غير تحميل كامل).
+    func recordCurrentPageIfNeeded() {
+        guard let url = webView?.url?.absoluteString else { return }
+        let base = url.components(separatedBy: "?").first ?? url
+        let lastBase = lastRecordedURL.components(separatedBy: "?").first ?? lastRecordedURL
+        guard base != lastBase else { return }
+        lastRecordedURL = url
+        engine.runPageRecord { [weak self] text in
+            guard let self = self, !text.isEmpty else { return }
+            DispatchQueue.main.async {
+                let sep = self.pageRecords.isEmpty ? "" : "\n──── صفحة جديدة ──────\n"
+                var buf = self.pageRecords + sep + text
+                if buf.count > 9000 {
+                    buf = String(buf.suffix(9000))
+                }
+                self.pageRecords = buf
+            }
+        }
     }
 
     private func advanceSpyIfNeeded() {
