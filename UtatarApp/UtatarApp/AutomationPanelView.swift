@@ -121,15 +121,15 @@ struct AutomationPanelView: View {
                     }
                     .padding(.horizontal)
 
+                    // ===== التدريب (أهم كارت — فوق خالص) =====
+                    TrainingCard(viewModel: viewModel)
+
                     // ===== الموارد الحقيقية =====
                     VStack(spacing: 16) {
                         RealResourcesCard(viewModel: viewModel)
 
                         // ===== الجنود في القرية =====
                         HomeTroopsCard(viewModel: viewModel)
-
-                        // ===== التدريب (صفحة الثكنات) =====
-                        TrainingCard(viewModel: viewModel)
 
                         // ===== القرى المكتشفة + التجسس =====
                         VillagesCard(viewModel: viewModel)
@@ -355,9 +355,9 @@ struct TrainingCard: View {
                     .frame(width: 60)
             }
 
-            Text("حدد اللي عايزه واكتب العدد (حتى مليون) — البوت بيدرب كل فترة بطلب مباشر للخادم من غير ما يفتح الثكنة ومن غير أي رفرش")
+            Text("اكتب العدد جنب النوع اللي عايز تدريبه (حتى مليون) — السيب فاضي مش هيتدرب. البوت بيدرب كل فترة بطلب مباشر من غير ما يفتح الثكنة ومن غير أي رفرش")
                 .font(.caption2)
-                .foregroundColor(.gray)
+                .foregroundColor(.yellow.opacity(0.9))
 
             HStack(spacing: 8) {
                 Text("يدرب كل:")
@@ -463,7 +463,7 @@ struct TrainRow: View {
 
             let affordableNow = unit.affordable(with: viewModel.gameResources ?? GameResources())
             HStack(spacing: 8) {
-                TextField("العدد", text: countBinding)
+                TextField("اكتب العدد", text: countBinding)
                     .keyboardType(.numberPad)
                     .font(.caption)
                     .foregroundColor(.white)

@@ -200,8 +200,10 @@ final class GameEngine: NSObject {
           if(!/^[0-9][0-9,.\\s]{2,}$/.test(txt)) return;
           var n=pi(txt); if(n<=0) return;
           var r=e.getBoundingClientRect();
-          if(r.width<=0 || r.top<0 || r.top>340) return;
-          var key=Math.round(r.top/14);
+          // بإحداثيات الصفحة (مش الشاشة): شريط الموارد فوق خالص حتى لو المستخدم عمل سكرول
+          var dtop=r.top+((window&&window.pageYOffset)||(document.documentElement&&document.documentElement.scrollTop)||0);
+          if(r.width<=0 || dtop>400) return;
+          var key=Math.round(dtop/14);
           (groups[key]=groups[key]||[]).push(n);
         });
         var best=null;
@@ -429,27 +431,42 @@ final class GameEngine: NSObject {
             var m=path.match(/id=(\\d+)/);
             if(!m){ window.__utatarFetchTrain=JSON.stringify({ok:false,message:'لا أعرف عنوان الثكنة — افتحها مرة واحدة بس'}); return; }
             var id=m[1];
-            fetch('build.php?id='+id,{credentials:'same-origin'}).then(function(r){return r.text();}).then(function(html){
-              // حدود الموارد الحقيقية: من max attributes ولينكات onclick بتاعة "/ N"
-              var caps={};
-              var reA=/name="tf?\\[?(\\d{1,2})\\]?"[^>]{0,240}?max="(\\d+)"/g, mm;
-              while((mm=reA.exec(html))){ var u1=parseInt(mm[1],10); var v1=parseInt(mm[2].replace(/,/g,''),10); if(v1>0) caps[u1]=v1; }
-              var reB=/\\[\\s*["']tf?\\[?(\\d{1,2})\\]?["']\\s*\\]\\.value\\s*=\\s*["']?([0-9][0-9,]*)/g;
-              while((mm=reB.exec(html))){ var u2=parseInt(mm[1],10); var v2=parseInt(mm[2].replace(/,/g,''),10); if(v2>0) caps[u2]=v2; }
-              var reC=/\\.snd\\.tf?(\\d{1,2})\\.value\\s*=\\s*["']?([0-9][0-9,]*)/g;
-              while((mm=reC.exec(html))){ var u3=parseInt(mm[1],10); var v3=parseInt(mm[2].replace(/,/g,''),10); if(v3>0) caps[u3]=v3; }
-              var body=[], sent=[];
+            fetch('build.php?id='+id,{credentials:'same-origin'}).then(function(r){return r.text();}).then(function(html2){
+              // فك التشفير: اللعبة بتكتب onclick="...&quot;..." فالأسبيك دايماً بيكسر الـ regex
+              var html=String(html2).replace(/&quot;/g,'"').replace(/&#0?39;/g,"'").replace(/&amp;/g,'&');
+              // حد كل نوع: من max attr / onclick value=N / أول رقم كبير بعد الحقل (صندوق "الكمية")
+              function capFor(uid){
+                var names=['tf['+uid+']','t'+uid,'t['+uid+']','tf'+uid];
+                for(var ni=0;ni<names.length;ni++){
+                  // بحث نصي مباشر (بدون regex): الباك سلاشات بتهم في سلسلة التحويلات
+                  var at=html.indexOf('name="'+names[ni]+'"');
+                  if(at<0) at=html.indexOf("name='"+names[ni]+"'");
+                  if(at<0) continue;
+                  var seg=html.substring(at,at+1000);
+                  var best=0;
+                  var ma=seg.match(/max=["']([0-9][0-9,]*)/);
+                  if(ma) best=parseInt(ma[1].replace(/,/g,''),10)||0;
+                  var mo=seg.match(/value\\s*=\\s*["']?\\s*([0-9][0-9,]*)/);
+                  if(mo){ var v=parseInt(mo[1].replace(/,/g,''),10)||0; if(v>best) best=v; }
+                  if(best>0) return best;
+                  var mn=seg.match(/>\\s*([0-9][0-9,]{2,})\\s*</);
+                  if(mn){ var v2=parseInt(mn[1].replace(/,/g,''),10)||0; if(v2>0) return v2; }
+                  return 0;   // الحقل موجود بس مفيش أي رقم = صفر مؤكد
+                }
+                return -1;      // الحقل مش في الصفحة خالص
+              }
+              var body=[], sent=[], zeros=0;
               pairs.forEach(function(p){
                 var uid=p[0], want=p[1];
-                var cap=caps[uid]||0;
-                if(cap<=0) return;
-                var v=Math.min(want,cap);
+                var c=capFor(uid);
+                if(c===0){ zeros++; return; }        // اللعبة بتقول صفر → متبعتش
+                var v=(c>0&&c<want)?c:want;          // قصّ على الحد، أو ابعت المطلوب والخادم هيقيد
                 body.push('t'+uid+'='+v);
                 body.push('tf%5B'+uid+'%5D='+v);
-                sent.push('u'+uid+'='+v);
+                sent.push('u'+uid+'='+v+(c>0?'/'+c:''));
               });
               if(body.length===0){
-                window.__utatarFetchTrain=JSON.stringify({ok:false,message:'الموارد مش كفاية لتدريب أي نوع دلوقتي'});
+                window.__utatarFetchTrain=JSON.stringify({ok:false,message: zeros>0 ? 'الموارد مش كفاية لتدريب أي نوع دلوقتي (الحد=0)' : 'ملقتش حقول التدريب في صفحة الثكنة'});
                 return;
               }
               body.push('id='+id); body.push('ft=t1'); body.push('s1=ok');

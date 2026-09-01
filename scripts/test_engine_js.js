@@ -127,6 +127,7 @@ const location = window.location;
 const document = {
   title: 'عصر التتار5',
   body: null,
+  documentElement: { scrollTop: 0 },
   createElement: tag => t(tag, {}),   // created elements auto-register globally (H)
   querySelector: s => H.querySelector(s),
   querySelectorAll: s => {
@@ -362,9 +363,12 @@ setTimeout(async () => {
   // ==== trainViaFetch: hidden GET+POST, zero navigation ====
   // fake barracks HTML: three cap formats the game uses
   const barrackHtml = [
-    '<input name="tf[11]" type="tel"><a href="#" onclick="document.snd[\'tf[11]\'].value=1234; return false;">1,234</a>',
-    '<input name="tf[12]" type="tel"><a href="#" onclick="document.snd.tf12.value=567; return false;">567</a>',
-    '<input name="tf[13]" type="tel" max="89">',
+    // واقعي: onclick بعلامات &quot; (كده اللعبة بتكتبه فعلاً)
+    '<tr><td>مقاتل بهراوة</td><td><input name="tf[11]" type="tel"><a href="#" onclick="document.snd[&quot;tf[11]&quot;].value=1234; return false;">1,234</a></td></tr>',
+    '<tr><td>مقاتل برمح</td><td><input name="tf[12]" type="tel"><a href="#" onclick="document.snd.tf12.value=567; return false;">567</a></td></tr>',
+    '<tr><td>مقاتل بفأس</td><td><input name="tf[13]" type="tel" max="89"></td></tr>',
+    // الكشاف: مفيش أي حد ظاهر غير صندوق رقم بعد الحقل
+    '<tr><td>الكشاف</td><td><input name="tf[14]" type="tel"> الكمية <b>305</b> / <span>0</span></td></tr>',
   ].join('');
   const calls = [];
   const fetch = function(url, opts) {
@@ -375,22 +379,23 @@ setTimeout(async () => {
   window.__utatarFetchTrain = 'pending';
   const kickJS = extractFunc('kickFetchTrainJS')
     .split('\\(path)').join('"build?id=34"')
-    .split('\\(pairs)').join('[[11,1000000],[12,200],[13,500]]');
+    .split('\\(pairs)').join('[[11,1000000],[12,200],[13,500],[14,9999]]');
   eval(kickJS);
   await sleep(60);
   const res = JSON.parse(String(window.__utatarFetchTrain));
   console.log('FETCH TRAIN:', JSON.stringify(res));
   if (res.ok !== true) throw new Error('FAIL fetch train: ' + res.message);
-  if (res.message.indexOf('u11=1234') < 0) throw new Error('FAIL cap u11: ' + res.message);
+  if (res.message.indexOf('u11=1234/1234') < 0) throw new Error('FAIL cap u11: ' + res.message);
+  if (res.message.indexOf('u14=305') < 0) throw new Error('FAIL text-box cap u14: ' + res.message);
   const post = calls[1];
   if (!post || post.url !== 'build.php') throw new Error('FAIL POST url: ' + (post && post.url));
   if (post.opts.method !== 'POST') throw new Error('FAIL POST method');
   const body = post.opts.body;
-  for (const piece of ['t11=1234', 'tf%5B11%5D=1234', 't12=200', 't13=89', 'ft=t1', 'id=34', 's1=ok']) {
+  for (const piece of ['t11=1234', 'tf%5B11%5D=1234', 't12=200', 't13=89', 't14=305', 'ft=t1', 'id=34', 's1=ok']) {
     if (body.indexOf(piece) < 0) throw new Error('FAIL body missing ' + piece + ' in ' + body);
   }
   if (calls[0].url !== 'build.php?id=34') throw new Error('FAIL GET url: ' + calls[0].url);
-  console.log('HIDDEN TRAIN ✓ (GET caps → capped POST: u11=1234, u12=200, u13=89, no navigation)');
+  console.log('HIDDEN TRAIN ✓ (u11:1234 from &quot;onclick, u12:200<567, u13:89 attr, u14:305 from row text)');
 
   console.log('\nALL JS TESTS PASSED ✅');
 }, 4600);
