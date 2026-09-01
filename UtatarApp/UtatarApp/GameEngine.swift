@@ -392,6 +392,89 @@ final class GameEngine: NSObject {
     }
 
     /// يدرّب كل نوع بالعدد الأقصى المسموح (يستخدم قيم max الحقيقية من الصفحة).
+    // MARK: - التدريب المخفي (fetch): بيستدعي الخادم مباشرة من أي صفحة — من غير ما نفتح الثكنة أو ننقل!
+
+    /// بيقرا حدود الموارد من صفحة الثكنة (fetch مخفي) وبعدين يبعت طلب التدريب مباشرة.
+    /// النتيجة تتخزن في window.__utatarFetchTrain وبنقراها بعد ثواني (من غير أي تنقل).
+    func trainViaFetch(barracksPath: String, pairs: [(Int, Int)], completion: @escaping (Bool, String) -> Void) {
+        var arr = "["
+        for (i, p) in pairs.enumerated() {
+            arr += "[\(p.0),\(p.1)]"
+            if i < pairs.count - 1 { arr += "," }
+        }
+        arr += "]"
+        runJSON(Self.kickFetchTrainJS(path: barracksPath, pairs: arr)) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
+                guard let self = self else { return }
+                self.runJSON(Self.fetchTrainResultJS) { obj in
+                    let state = (obj?["state"] as? String) ?? "pending"
+                    if state == "pending" || state.isEmpty {
+                        completion(false, "__pending__")
+                        return
+                    }
+                    let ok = ((obj?["ok"] as? Bool) ?? false)
+                    completion(ok, obj?["message"] as? String ?? "مفيش رد")
+                }
+            }
+        }
+    }
+
+    static func kickFetchTrainJS(path: String, pairs: String) -> String {
+        return """
+        (function(){
+          try{
+            window.__utatarFetchTrain='pending';
+            var path='\(path)';
+            var pairs=\(pairs);
+            var m=path.match(/id=(\\d+)/);
+            if(!m){ window.__utatarFetchTrain=JSON.stringify({ok:false,message:'لا أعرف عنوان الثكنة — افتحها مرة واحدة بس'}); return; }
+            var id=m[1];
+            fetch('build.php?id='+id,{credentials:'same-origin'}).then(function(r){return r.text();}).then(function(html){
+              // حدود الموارد الحقيقية: من max attributes ولينكات onclick بتاعة "/ N"
+              var caps={};
+              var reA=/name="tf?\\[?(\\d{1,2})\\]?"[^>]{0,240}?max="(\\d+)"/g, mm;
+              while((mm=reA.exec(html))){ var u1=parseInt(mm[1],10); var v1=parseInt(mm[2].replace(/,/g,''),10); if(v1>0) caps[u1]=v1; }
+              var reB=/\\[\s*["']tf?\\[?(\\d{1,2})\\]?["']\\s*\\]\\.value\\s*=\\s*["']?([0-9][0-9,]*)/g;
+              while((mm=reB.exec(html))){ var u2=parseInt(mm[1],10); var v2=parseInt(mm[2].replace(/,/g,''),10); if(v2>0) caps[u2]=v2; }
+              var reC=/\\.snd\\.tf?(\\d{1,2})\\.value\\s*=\\s*["']?([0-9][0-9,]*)/g;
+              while((mm=reC.exec(html))){ var u3=parseInt(mm[1],10); var v3=parseInt(mm[2].replace(/,/g,''),10); if(v3>0) caps[u3]=v3; }
+              var body=[], sent=[];
+              pairs.forEach(function(p){
+                var uid=p[0], want=p[1];
+                var cap=caps[uid]||0;
+                if(cap<=0) return;
+                var v=Math.min(want,cap);
+                body.push('t'+uid+'='+v);
+                body.push('tf%5B'+uid+'%5D='+v);
+                sent.push('u'+uid+'='+v);
+              });
+              if(body.length===0){
+                window.__utatarFetchTrain=JSON.stringify({ok:false,message:'الموارد مش كفاية لتدريب أي نوع دلوقتي'});
+                return;
+              }
+              body.push('id='+id); body.push('ft=t1'); body.push('s1=ok');
+              return fetch('build.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.join('&')})
+                .then(function(r2){
+                  window.__utatarFetchTrain=JSON.stringify({ok:(r2.ok===true),message:'طلب التدريب اتبعت للخادم مباشرة ('+sent.join(', ')+')'+(r2.redirected?' — الخادم حوّل (إشارة قبول)':''),status:r2.status});
+                });
+            }).catch(function(e){ window.__utatarFetchTrain=JSON.stringify({ok:false,message:'فشل طلب التدريب: '+e.message}); });
+          }catch(e){ try{ window.__utatarFetchTrain=JSON.stringify({ok:false,message:e.message}); }catch(e2){} }
+        })();
+        """
+    }
+
+    static let fetchTrainResultJS = """
+    (function(){
+      try{
+        var st=String(window.__utatarFetchTrain||'pending');
+        if(st==='pending') return JSON.stringify({state:'pending'});
+        var obj=JSON.parse(st);
+        obj.state='done';
+        return JSON.stringify(obj);
+      }catch(e){ return JSON.stringify({state:'pending'}); }
+    })();
+    """
+
     /// تدريب بأنواع وأعداد مخصصة (inputName, count) — مع كاب تلقائي بالموارد المتاحة.
     func trainSelected(_ pairs: [(String, Int)], completion: @escaping (Bool, String) -> Void) {
         runJSON(Self.trainManyJS(pairs)) { obj in

@@ -342,7 +342,8 @@ class WebViewModel: NSObject, ObservableObject {
         engine.readTrainableUnits { [weak self] units in
             guard let self = self else { return }
             DispatchQueue.main.async {
-                if units.count != self.trainableUnits.count {
+                // السجل بيهم بس صفحات المباني (في أي صفحة تانية القراءة ملهاش معنى وبتلخبط)
+                if kind == "build", units.count != self.trainableUnits.count {
                     self.logActivity(units.isEmpty
                         ? "مفيش وحدات تدريب في الصفحة (\(kind))"
                         : "لقيت \(units.count) وحدة قابلة للتدريب في \(kind)")
@@ -353,7 +354,10 @@ class WebViewModel: NSObject, ObservableObject {
                 }
                 // اللقط الدائم: أي أنواع جديدة تظهر → تتخزن للأبد
                 self.captureTroopTypes(units)
-                self.trainableUnits = units
+                // قايمة العرض ما تتفضيش غير من صفحة مبنى فعلًا — الصفحات التانية ما تمسحهاش
+                if !units.isEmpty || kind == "build" {
+                    self.trainableUnits = units
+                }
             }
         }
 
@@ -779,45 +783,79 @@ class WebViewModel: NSObject, ObservableObject {
             return
         }
         // الأنواع المحددة: العدد المكتوب (أي رقم — حتى مليون). الفاضي = مش هيتدرب.
-        var pairs: [(String, Int)] = []
+        var typed: [(uid: Int, amount: Int, inputName: String)] = []
         for u in catalog {
             let raw = (trainCounts[u.id] ?? "").filter { $0.isNumber }
-            if let n = Int(raw), n > 0 { pairs.append((u.id, n)) }
+            if let n = Int(raw), n > 0 {
+                let uid = u.unitId != 0 ? u.unitId : Self.uidFromKey(u.id)
+                if uid > 0 { typed.append((uid, n, u.id)) }
+            }
         }
-        guard !pairs.isEmpty else {
+        guard !typed.isEmpty else {
             if !barracksHintShown {
                 barracksHintShown = true
                 logActivity("🐴 اكتب العدد جنب كل نوع عايز تدربه (أي رقم كتابي — 100 أو 1000000)")
             }
             return
         }
+        // واقفين في الثكنة؟ استخدم فورم الصفحة (نفس لوجك زرار "درّب" بالظبط).
+        // أي صفحة تانية؟ طلب مباشر مخفي للخادم — من غير أي تنقل أو رفرش خالص.
         if pageKind == "build" {
-            fireTraining(pairs)
+            fireTraining(typed.map { ($0.inputName, $0.amount) }, fetchPairs: typed.map { ($0.uid, $0.amount) })
         } else if !barracksPath.isEmpty {
+            fireTraining([], fetchPairs: typed.map { ($0.uid, $0.amount) })
+        } else {
             if !barracksHintShown {
                 barracksHintShown = true
-                logActivity("🐴 التدريب المستمر: رايح الثكنة (\(barracksPath))")
+                logActivity("🐴 افتح الثكنة مرة واحدة بس عشان أتعلم عنوانها — بعدها هدرب من أي صفحة ومن غير ما أفتحها")
             }
-            navigate(path: barracksPath)
-        } else {
-            gotoBarracks(failReason: "التدريب المستمر محتاج الثكنة")
         }
     }
 
+    private static func uidFromKey(_ key: String) -> Int {
+        let digits = key.filter { $0.isNumber }
+        return Int(digits) ?? 0
+    }
+
     /// تنفيذ التدريب الفعلي + ضبط الفترة الجاية + التحقق من قبول اللعبة.
-    private func fireTraining(_ pairs: [(String, Int)]) {
-        engine.trainSelected(pairs) { [weak self] ok, msg in
+    /// pairs = فورم الصفحة الحالية (لما نكون في الثكنة). fetchPairs = التدريب المخفي من أي صفحة.
+    private func fireTraining(_ pairs: [(String, Int)], fetchPairs: [(Int, Int)]? = nil) {
+        let onBarracks = !pairs.isEmpty
+        let handler: (Bool, String) -> Void = { [weak self] ok, msg in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                if msg == "__pending__" {
+                    // الطلب لسه في الطريق — الدورة الجاية (30 ثانية) هتتكفل
+                    return
+                }
                 if ok {
-                    if let url = self.webView?.url {
-                        self.barracksPath = Self.trainablePath(from: url)
-                    }
                     self.barracksHintShown = false
                     self.intervalNoteShown = false
                     self.ensureTrainQueued(withinMinutes: self.trainIntervalMin)
                     self.markSubmitBusy()
                     self.logActivity("🐴 تدريب مجدول: \(msg) — طلبت تاني بعد \(self.trainIntervalMin) دقيقة ✅")
+                } else if msg.contains("مش كفاية") {
+                    // الموارد خلصت: إعادة جدولة بصمت — من غير تنقل ولا رفرش
+                    self.ensureTrainQueued(withinMinutes: max(1, min(self.trainIntervalMin, 5)))
+                    if Date().timeIntervalSince(self.lastShortageLogAt) > 120 {
+                        self.lastShortageLogAt = Date()
+                        let mins = max(1, min(self.trainIntervalMin, 5))
+                        self.logActivity("🌵 \(msg) — في محاولة تانية بعد \(mins) دقيقة ✅")
+                    }
+                } else if onBarracks {
+                    self.gotoBarracks(failReason: msg)
+                } else {
+                    // في وضع fetch ممنوع نتنقل — نسجل ونحاول في الدورة الجاية
+                    self.logActivity("⚠️ \(msg) — هجرب تاني في الدورة الجاية")
+                }
+            }
+        }
+
+        if onBarracks {
+            // نفس لوجك زرار "درّب": فورم الصفحة + التحقق بعد ثواني
+            engine.trainSelected(pairs) { ok, msg in
+                handler(ok, msg)
+                if ok {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
                         guard let self = self else { return }
                         self.engine.trainCheck { state in
@@ -829,18 +867,10 @@ class WebViewModel: NSObject, ObservableObject {
                             }
                         }
                     }
-                } else if msg.contains("مش كفاية") {
-                    // الموارد خلصت: نعيد الجدولة بصمت — من غير تنقل ولا رفرش. الدورة الجاية هتجرب تاني.
-                    self.ensureTrainQueued(withinMinutes: max(1, min(self.trainIntervalMin, 5)))
-                    if Date().timeIntervalSince(self.lastShortageLogAt) > 120 {
-                        self.lastShortageLogAt = Date()
-                        let mins = max(1, min(self.trainIntervalMin, 5))
-                        self.logActivity("🌵 \(msg) — في محاولة تانية بعد \(mins) دقيقة ✅")
-                    }
-                } else {
-                    self.gotoBarracks(failReason: msg)
                 }
             }
+        } else if let fetchPairs = fetchPairs {
+            engine.trainViaFetch(barracksPath: barracksPath, pairs: fetchPairs, completion: handler)
         }
     }
 

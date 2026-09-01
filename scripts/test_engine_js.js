@@ -141,6 +141,8 @@ function t(tag, attrs = {}, children = [], text = "") {
   return H.register(el);
 }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 // --- Browser globals the scripts rely on ---
 class Event { constructor(type, opts) { this.type = type; this.bubbles = !!(opts && opts.bubbles); } }
 const HTMLInputElement = { prototype: {} };
@@ -352,9 +354,43 @@ if (recOut.indexOf('/radio=3') < 0) throw new Error('FAIL radio value not in rec
 console.log('RECORD F0:', (recOut.match(/F0[^"]*/) || ['?'])[0]);
 
 // trainBlind beacon: after submit the form "left the page" (emulator has no body-contains)
-setTimeout(() => {
+setTimeout(async () => {
   const st = String(window.__utatarTrainCheck || 'none');
   console.log('TRAINCHECK:', st);
   if (st !== 'gone') throw new Error('FAIL train beacon state: ' + st);
+
+  // ==== trainViaFetch: hidden GET+POST, zero navigation ====
+  // fake barracks HTML: three cap formats the game uses
+  const barrackHtml = [
+    '<input name="tf[11]" type="tel"><a href="#" onclick="document.snd[\'tf[11]\'].value=1234; return false;">1,234</a>',
+    '<input name="tf[12]" type="tel"><a href="#" onclick="document.snd.tf12.value=567; return false;">567</a>',
+    '<input name="tf[13]" type="tel" max="89">',
+  ].join('');
+  const calls = [];
+  const fetch = function(url, opts) {
+    calls.push({ url: url, opts: opts || {} });
+    if (calls.length === 1) return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(barrackHtml) });
+    return Promise.resolve({ ok: true, status: 200, redirected: true });
+  };
+  window.__utatarFetchTrain = 'pending';
+  const kickJS = extractFunc('kickFetchTrainJS')
+    .split('\\(path)').join('"build?id=34"')
+    .split('\\(pairs)').join('[[11,1000000],[12,200],[13,500]]');
+  eval(kickJS);
+  await sleep(60);
+  const res = JSON.parse(String(window.__utatarFetchTrain));
+  console.log('FETCH TRAIN:', JSON.stringify(res));
+  if (res.ok !== true) throw new Error('FAIL fetch train: ' + res.message);
+  if (res.message.indexOf('u11=1234') < 0) throw new Error('FAIL cap u11: ' + res.message);
+  const post = calls[1];
+  if (!post || post.url !== 'build.php') throw new Error('FAIL POST url: ' + (post && post.url));
+  if (post.opts.method !== 'POST') throw new Error('FAIL POST method');
+  const body = post.opts.body;
+  for (const piece of ['t11=1234', 'tf%5B11%5D=1234', 't12=200', 't13=89', 'ft=t1', 'id=34', 's1=ok']) {
+    if (body.indexOf(piece) < 0) throw new Error('FAIL body missing ' + piece + ' in ' + body);
+  }
+  if (calls[0].url !== 'build.php?id=34') throw new Error('FAIL GET url: ' + calls[0].url);
+  console.log('HIDDEN TRAIN ✓ (GET caps → capped POST: u11=1234, u12=200, u13=89, no navigation)');
+
   console.log('\nALL JS TESTS PASSED ✅');
 }, 4600);
