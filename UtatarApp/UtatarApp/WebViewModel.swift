@@ -61,6 +61,14 @@ class WebViewModel: NSObject, ObservableObject {
     @Published var pageRecords: String = "" { didSet { UD.set(pageRecords, forKey: "pageRecords") } }
     /// عنوان آخر صفحة تدريب نجحت — عشان التدريب الأوتوماتيك يروحلها لوحده
     @Published var barracksPath: String = "" { didSet { UD.set(barracksPath, forKey: "barracksPath") } }
+    /// مهلة بعد تدريب ناجح: منكررش التدريب على اللعبة كل 30 ثانية
+    private var trainCooldownUntil = Date.distantPast
+    private var barracksHintShown = false
+    /// خلايا الخريطة اللي البوت زارها (dorf3?id=) — عشان ما يزورش نفس الخلية تاني
+    private var exploredCells = Set<String>()
+    private var lastExploreAt = Date.distantPast
+    private var karteFruitless = 0
+    private var lastRecordedAt = Date.distantPast
     private var lastRecordedURL = ""
 
     /// سجل كل حركة بيعملها المحرك — بيظهر في البانل وبيساعدنا نعرف مين اللي فشل وليه.
@@ -215,49 +223,55 @@ class WebViewModel: NSObject, ObservableObject {
             checkResourcesFull()
         }
         if autoSpyEnabled {
-            autoSpyNext()
+            exploreAndSpy()
         }
         checkAlertAndRetreat()
     }
 
     /// التجسس التلقائي: كل دورة تجسس للقرية اللي بعد الحالي (دورياً).
     private var spyCursor = 0
-    /// القرى اللي اتجسّت في الجلسة دي — عشان منرجعش لنفس القرية تاني على طول.
+    /// القرى/الخلايا اللي اتعلمنا عليها في الجلسة دي — ما نرجعش لها تاني على طول.
     private var spyDone = Set<String>()
-    private func autoSpyNext() {
+
+    /// مستكشف الخريطة + التجسس الذكي:
+    /// 1) أي قرية معلومة (لها لاعب وإحداثيات) → تجسس فوري.
+    /// 2) مفيش؟ يزور خلية خريطة جديدة (dorf3?id=) كل 25 ثانية ويتعرف عليها.
+    /// 3) خلصت الخلايا؟ يجيب منطقة جديدة من الخريطة (مرتين كحد أقصى).
+    private func exploreAndSpy() {
         guard pendingAction == nil else { return }
-        guard !mapVillages.isEmpty else {
-            logActivity("🤖 التجسس التلقائي: محتاج قرى بإحداثيات — من الخريطة أو اكتبها يدوي")
-            return
-        }
-        // تجاهل: القرى من غير إحداثيات + الواحات + القرى اللي مفيهاش لاعب (المجهولة/الفاضية)
-        var target: MapVillage?
-        var skipped = 0
+        // 1) قرى معروفة الإحداثيات واللاعب
         for _ in 0..<mapVillages.count {
             spyCursor = (spyCursor + 1) % mapVillages.count
             let v = mapVillages[spyCursor]
-            guard v.x != 0 || v.y != 0 else { skipped += 1; continue }
-            guard !spyDone.contains(v.id) else { skipped += 1; continue }
+            guard v.x != 0 || v.y != 0 else { continue }
+            guard !spyDone.contains(v.id) else { continue }
             let nm = v.name
-            if nm.contains("واحة") || nm.contains("مجهول") || nm.contains("خالية") { skipped += 1; continue }
+            if nm.contains("واحة") || nm.contains("مجهول") || nm.contains("خالية") { continue }
             let pl = v.player.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !pl.isEmpty, pl != "-", pl != "?" else { skipped += 1; continue }
-            target = v
-            break
-        }
-        guard let t = target else {
-            // كل القرى اتجسّت؟ نفضل داورين من أول وجديد لما تتجدد الخريطة
-            if spyDone.count >= mapVillages.count, !spyDone.isEmpty {
-                spyDone.removeAll()
-                logActivity("🤖 خلصنا دورة تجسس كاملة — هنبدأ دورة جديدة")
-            } else {
-                logActivity("🤖 مفيش قرى صالحة للتجسس (تجاهلنا \(skipped) واحة/قرية فاضية/مكررة)")
-            }
+            guard !pl.isEmpty, pl != "-", pl != "?" else { continue }
+            spyDone.insert(v.id)
+            logActivity("🤖 تجسس تلقائي على: \(v.name) (\(v.x)|\(v.y)) لاعب: \(v.player)")
+            startSpy(x: v.x, y: v.y, name: v.name)
             return
         }
-        spyDone.insert(t.id)
-        logActivity("🤖 تجسس تلقائي على: \(t.name) (\(t.x)|\(t.y)) لاعب: \(t.player)")
-        startSpy(x: t.x, y: t.y, name: t.name)
+        // 2) استكشاف خلية جديدة من خلايا الخريطة اللي مسحناها
+        guard Date().timeIntervalSince(lastExploreAt) > 25 else { return }
+        let cell = mapVillages.first { v in
+            v.href.contains("dorf3?id=") && !exploredCells.contains(v.id)
+        }
+        if let cell = cell {
+            exploredCells.insert(cell.id)
+            lastExploreAt = Date()
+            logActivity("🧭 استكشاف الخريطة: خلية جديدة (كشفنا \(exploredCells.count))")
+            navigate(path: "/" + cell.href)
+            return
+        }
+        // 3) الخلايا خلصت — نجيب منطقة خريطة جديدة (من غير لوب مفتوح)
+        if pageKind != "map", karteFruitless < 2, Date().timeIntervalSince(lastExploreAt) > 90 {
+            lastExploreAt = Date()
+            logActivity("🧭 رايح أجيب منطقة جديدة من الخريطة")
+            navigate(path: "/karte")
+        }
     }
 
     // MARK: - القراءة الحقيقية من اللعبة (GameEngine)
@@ -305,6 +319,10 @@ class WebViewModel: NSObject, ObservableObject {
                         ? "مفيش وحدات تدريب في الصفحة (\(kind))"
                         : "لقيت \(units.count) وحدة قابلة للتدريب في \(kind)")
                 }
+                // لقينا فورمة تدريب في صفحة build؟ سجّل عنوانها — دي الثكنة/الإسطبل اللي بندرّب فيها
+                if !units.isEmpty, kind == "build", let url = self.webView?.url {
+                    self.barracksPath = Self.trainablePath(from: url)
+                }
                 self.trainableUnits = units
             }
         }
@@ -336,6 +354,9 @@ class WebViewModel: NSObject, ObservableObject {
                         if let prev = old[v.id], v.name.isEmpty { return prev }
                         return v
                     }
+                    // لقينا خلايا جديدة مش متكشفة؟ لو لأ، منعودش للخريطة على الفاضي
+                    let fresh = villages.contains { v in v.href.contains("dorf3?id=") && !self.exploredCells.contains(v.id) }
+                    self.karteFruitless = fresh ? 0 : min(self.karteFruitless + 1, 3)
                 }
                 self.isScanningMap = false
                 if self.mapVillages.isEmpty {
@@ -401,15 +422,60 @@ class WebViewModel: NSObject, ObservableObject {
            Date().timeIntervalSince(lastBotNavAt) < 20 {
             injectAutoTrain()
         }
+        // البوت زار خلية خريطة (dorf3?id=)؟ نتعرف عليها: فيها لاعب؟ نتجسسها. فاضية؟ نكمل.
+        if isAutomationEnabled, autoSpyEnabled, pendingAction == nil,
+           pageKind == "villageInfo", Date().timeIntervalSince(lastExploreAt) < 30 {
+            processExploredCell()
+        }
+    }
+
+    /// قراءة صفحة معلومات القرية اللي البوت وصلها من الاستكشاف.
+    private func processExploredCell() {
+        lastExploreAt = Date()
+        guard let urlStr = webView?.url?.absoluteString else { return }
+        let vid = urlStr.contains("id=") ? (urlStr.components(separatedBy: "id=").last ?? "") : UUID().uuidString
+        engine.readVillageInfo { [weak self] info in
+            guard let self = self, let info = info else { return }
+            DispatchQueue.main.async {
+                let player = ((info["player"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let x = (info["x"] as? Int) ?? 0
+                let y = (info["y"] as? Int) ?? 0
+                let nm = ((info["name"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                // حدّث بيانات الخلية في قايمة القرى
+                if let idx = self.mapVillages.firstIndex(where: { $0.id == vid }) {
+                    let old = self.mapVillages[idx]
+                    self.mapVillages[idx] = MapVillage(id: old.id,
+                                                       name: nm.isEmpty ? old.name : nm,
+                                                       x: x != 0 ? x : old.x,
+                                                       y: y != 0 ? y : old.y,
+                                                       player: player.isEmpty ? old.player : player,
+                                                       population: old.population,
+                                                       href: old.href)
+                }
+                let pl = player.trimmingCharacters(in: .whitespacesAndNewlines)
+                if (x != 0 || y != 0), !pl.isEmpty, pl != "-", pl != "?" {
+                    guard !self.spyDone.contains(vid) else { return }
+                    self.spyDone.insert(vid)
+                    self.logActivity("🎯 لقينا قرية لاعب: \(nm) (\(x)|\(y)) — بتجسسها")
+                    self.startSpy(x: x, y: y, name: nm.isEmpty ? "قرية" : nm)
+                } else {
+                    self.logActivity("🧭 الخلية فاضية (مفيش لاعب) — نكمل الاستكشاف")
+                }
+            }
+        }
     }
 
     /// مسجل الصفحات الأوتوماتيكي: يسجل كل صفحة جديدة (بدون تكرار) عشان نحلل الـ DOM الحقيقي.
     func recordCurrentPageIfNeeded() {
         guard let url = webView?.url?.absoluteString else { return }
-        let base = url.components(separatedBy: "?").first ?? url
-        let lastBase = lastRecordedURL.components(separatedBy: "?").first ?? lastRecordedURL
-        guard base != lastBase else { return }
+        let base = url.components(separatedBy: "#").first ?? url
+        let lastBase = lastRecordedURL.components(separatedBy: "#").first ?? lastRecordedURL
+        if base == lastBase {
+            // نفس الصفحة؟ نسجلها تاني كل 10 دقايق بس (عشان نشوف تغيّر الفورم بعد التدريب)
+            guard Date().timeIntervalSince(lastRecordedAt) > 600 else { return }
+        }
         lastRecordedURL = url
+        lastRecordedAt = Date()
         engine.runPageRecord { [weak self] text in
             guard let self = self, !text.isEmpty else { return }
             DispatchQueue.main.async {
@@ -659,17 +725,31 @@ class WebViewModel: NSObject, ObservableObject {
     }
     
     func injectAutoTrain() {
-        // لو في مهمة إرسال شغالة ما نعرفش نقطعها
-        guard pendingAction == nil else { return }
+        // لو في مهمة إرسال شغالة ما نعرفش نقطعها + مهلة بعد كل تدريب ناجح
+        guard pendingAction == nil, Date() >= trainCooldownUntil else { return }
         let c = autoTrainCount
         engine.trainBlind(count: c) { [weak self] ok, msg in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if ok {
-                    // نجاح؟ اتعلم عنوان الثكنة من الصفحة الحالية عشان المرة الجاية نروحلها على طول
+                    // اتعلم عنوان الثكنة من الصفحة الحالية، وامنع تكرار التدريب لمدة ربع ساعة
                     if let url = self.webView?.url {
                         self.barracksPath = Self.trainablePath(from: url)
-                        self.logActivity("🐴 تدريب تلقائي: \(msg)")
+                    }
+                    self.barracksHintShown = false
+                    self.trainCooldownUntil = Date().addingTimeInterval(15 * 60)
+                    self.logActivity("🐴 تدريب تلقائي: \(msg) — التدريب الجاي بعد ربع ساعة")
+                    // التحقق بعد ثانيتين: لو الفورم لسه مكانها يبقى اللعبة رفضت — نسجل ردها
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.3) { [weak self] in
+                        guard let self = self else { return }
+                        self.engine.trainCheck { state in
+                            DispatchQueue.main.async {
+                                if state.hasPrefix("still") {
+                                    let reply = String(state.dropFirst(5))
+                                    self.logActivity("⚠️ اللعبة ما قبلتش التدريب — رد اللعبة:\(reply.isEmpty ? " (مفيش رسالة)" : reply)")
+                                }
+                            }
+                        }
                     }
                 } else {
                     self.gotoBarracks(failReason: msg)
@@ -695,13 +775,19 @@ class WebViewModel: NSObject, ObservableObject {
 
         if !barracksPath.isEmpty {
             if cur == barracksPath {
-                // الكاش وصلنا لنفس الصفحة ومفيش فورم — الكاش مش ثكنة، نمسحه وندور بنفسنا
-                barracksPath = ""
-            } else {
-                logActivity("🐴 \(failReason) — رايح الثكنة (\(barracksPath))")
-                navigate(path: barracksPath)
+                // واقفين في الثكنة أصلاً — الفورمة مش متاحة دلوقتي، ما نمشيش في حتة تانية
+                if !barracksHintShown {
+                    barracksHintShown = true
+                    logActivity("🐴 \(failReason) — واقف في الثكنة بس الفورمة مش متاحة دلوقتي")
+                }
                 return
             }
+            if !barracksHintShown {
+                barracksHintShown = true
+                logActivity("🐴 \(failReason) — رايح الثكنة (\(barracksPath))")
+            }
+            navigate(path: barracksPath)
+            return
         }
 
         engine.findBarracksLink { [weak self] href in
@@ -711,11 +797,9 @@ class WebViewModel: NSObject, ObservableObject {
                     self.barracksPath = Self.trainablePath(from: u)
                     self.logActivity("🐴 \(failReason) — لقيت الثكنة، رايحلها (\(self.barracksPath))")
                     self.navigate(path: self.barracksPath)
-                } else if self.pageKind != "dorf2" {
-                    self.logActivity("🐴 \(failReason) — ماشي لساحة القرية عشان ألاقي الثكنة")
-                    self.navigate(path: "/dorf2")
-                } else {
-                    self.logActivity("🐴 \(failReason) — افتح الثكنة مرة واحدة في اللعبة عشان التطبيق يتعلم مكانها")
+                } else if !self.barracksHintShown {
+                    self.barracksHintShown = true
+                    self.logActivity("🐴 \(failReason) — افتح الثكنة مرة واحدة في اللعبة عشان التطبيق يتعلم مكانها ويمشي لوحده")
                 }
             }
         }

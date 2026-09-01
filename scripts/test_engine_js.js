@@ -64,6 +64,7 @@ class Element {
     }
     return out;
   }
+  contains(other) { let e = other; while (e) { if (e === this) return true; e = e.parentElement; } return false; }
   closest(selList) {
     let e = this.parentElement;
     while (e) {
@@ -118,6 +119,7 @@ const H = {
   querySelectorAll(sel) { return this.els.filter(el => matches(el, sel)); },
 };
 const window = { location: { href: 'https://utatar.com/build?id=34' } };
+const location = window.location;
 const document = {
   title: 'عصر التتار5',
   body: null,
@@ -216,12 +218,18 @@ if (!h11 || h11.count !== 737) throw new Error('FAIL home u11=737, got ' + JSON.
 const mapTile = t('div', { onclick: "go('karte?d=998877')" , title: 'قرية (7|9) اللاعب علي' }, []);
 // mapScan looks for area[href*=karte], div[onclick*=d=], a[href*=karte]
 const mapA = t('a', { href: 'karte?d=998877', title: 'قرية (7|9) اللاعب علي السكان 120' }, [], 'قرية علي');
+// real-game map cells: dorf3?id= links with EMPTY titles
+const cellA = t('a', { href: 'dorf3?id=867966' });
+const cellB = t('area', { href: 'dorf3?id=867967', title: '' });
 const mapScanJS = extractStatic('mapScanJS');
 const mv = JSON.parse(eval(mapScanJS));
 console.log('MAP:', JSON.stringify(mv));
 if (!mv.length) throw new Error('FAIL map scan found nothing');
 const v = mv.find(x => x.vid === '998877');
 if (!v || v.x !== 7 || v.player.indexOf('علي') < 0) throw new Error('FAIL map village parse');
+const cA = mv.find(x => x.vid === '867966');
+if (!cA) throw new Error('FAIL dorf3 cell 867966 not harvested');
+if (!mv.find(x => x.vid === '867967')) throw new Error('FAIL dorf3 area cell not harvested');
 
 // ==== Run scoutSendJS(count=3) on a send form ====
 // form with t-inputs + x/y (like a2b send page)
@@ -285,4 +293,27 @@ if (!blindRes.ok) throw new Error('FAIL trainBlind: ' + blindRes.message);
 if (inp11.value !== '500') throw new Error('FAIL blind tf[11]=500, got ' + inp11.value);
 if (inp14.value !== '87') throw new Error('FAIL blind tf[14] capped to 87, got ' + inp14.value);
 
-console.log('\nALL JS TESTS PASSED ✅');
+// ==== readVillageInfoJS: parses player/coords from a dorf3-style info page ====
+const vbody = t('body', {}, [
+  t('div', {}, [], 'قرية الحصن — اللاعب: قيس السكان: 45 (12|34)'),
+]);
+document.body = vbody;
+const vinfoJS = extractFunc('readVillageInfoJS');
+const vinfo = JSON.parse(eval(vinfoJS));
+console.log('VILLAGE INFO:', JSON.stringify(vinfo));
+if (String(vinfo.player).indexOf('قيس') < 0) throw new Error('FAIL village player parse: ' + vinfo.player);
+if (vinfo.x !== 12 || vinfo.y !== 34) throw new Error('FAIL village coords: ' + vinfo.x + ',' + vinfo.y);
+
+// ==== pageRecordJS: radio VALUES are now dumped (ground truth for c) ====
+const recJS = extractFunc('pageRecordJS');
+const recOut = eval(recJS);
+if (recOut.indexOf('/radio=3') < 0) throw new Error('FAIL radio value not in record: ' + recOut.split('\n').find(l => l.startsWith('F0')));
+console.log('RECORD F0:', (recOut.match(/F0[^"]*/) || ['?'])[0]);
+
+// trainBlind beacon: after submit the form "left the page" (emulator has no body-contains)
+setTimeout(() => {
+  const st = String(window.__utatarTrainCheck || 'none');
+  console.log('TRAINCHECK:', st);
+  if (st !== 'gone') throw new Error('FAIL train beacon state: ' + st);
+  console.log('\nALL JS TESTS PASSED ✅');
+}, 1900);

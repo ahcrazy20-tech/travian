@@ -101,6 +101,7 @@ final class GameEngine: NSObject {
         let q = url.query ?? ""
         if path.hasPrefix("dorf1") { return "dorf1" }
         if path.hasPrefix("dorf2") { return "dorf2" }
+        if path.hasPrefix("dorf3") { return "villageInfo" }
         if path.hasPrefix("a2b") { return "a2b" }
         if path.hasPrefix("karte") { return q.contains("d=") ? "villageInfo" : "map" }
         if path.hasPrefix("map") { return "map" }
@@ -484,6 +485,7 @@ final class GameEngine: NSObject {
       var out=[];
       function push(href, title){
         var dm=href.match(/d=(\\d+)/);
+        if(!dm){ var d3=href.match(/dorf3\\?id=(\\d+)/); if(d3) dm=d3; }
         if(!dm) return;
         var xy=title.match(/\\((-?\\d{1,4})\\s*\\|\\s*(-?\\d{1,4})\\)/);
         var player='';
@@ -518,6 +520,10 @@ final class GameEngine: NSObject {
       document.querySelectorAll('a[href*="karte"], area[href*="karte"]').forEach(function(a){
         var h=a.getAttribute('href')||'';
         if(h.indexOf('d=')>=0) push(h, a.getAttribute('title')||(a.textContent||'').trim());
+      });
+      // 3) خلايا الخريطة في عصر التتار: روابط dorf3?id=NNNNNN (بدون عنوان)
+      document.querySelectorAll('area[href*="dorf3?id="], a[href*="dorf3?id="]').forEach(function(a){
+        push(a.getAttribute('href')||'', a.getAttribute('title')||(a.textContent||'').trim());
       });
       return JSON.stringify(out);
     })();
@@ -712,11 +718,62 @@ final class GameEngine: NSObject {
             if(btn){ btn.click(); }
             else if(form.requestSubmit){ form.requestSubmit(); }
             else { return JSON.stringify({ok:false,message:'لا يوجد زر تدريب'}); }
+            // بعد ثانية ونص: لو الفورم لسه موجود يبقى اللعبة ما قبلتش التدريب
+            setTimeout(function(){
+              try{
+                var alive = document.body && document.body.contains(form);
+                var errs='';
+                document.querySelectorAll('[class*="error"],[class*="err"],[class*="alert"],[class*="notif"]').forEach(function(e){
+                  var t2=(e.textContent||'').trim();
+                  if(t2.length>0 && t2.length<160) errs += ' | '+t2;
+                });
+                window.__utatarTrainCheck = alive ? ('still'+errs) : 'gone';
+              }catch(e2){}
+            }, 1600);
             return JSON.stringify({ok:true,message:'بدأ التدريب ('+names.join(', ')+')'});
           }catch(e){ return JSON.stringify({ok:false,message:e.message}); }
         })();
         """
     }
+
+    /// بعد التدريب: بيرجع إشارة التحقق (gone = الصفحة اتنقلت = اللعبة قبلت).
+    func trainCheck(completion: @escaping (String) -> Void) {
+        runJSON(Self.trainCheckJS) { obj in
+            completion((obj?["state"] as? String) ?? "none")
+        }
+    }
+
+    static let trainCheckJS = """
+    (function(){
+      try{ return JSON.stringify({state: String(window.__utatarTrainCheck||'none').substring(0,180)}); }
+      catch(e){ return JSON.stringify({state:'none'}); }
+    })();
+    """
+
+    /// قراءة صفحة معلومات القرية (dorf3/karte?d=): الاسم واللاعب والإحداثيات ولينك الهجوم.
+    func readVillageInfo(completion: @escaping ([String: Any]?) -> Void) {
+        runJSON(Self.readVillageInfoJS) { obj in completion(obj) }
+    }
+
+    static let readVillageInfoJS = """
+    (function(){
+      try{
+        var b=document.body||document.querySelector('body');
+        var txt=b?(b.textContent||''):'';
+        function rx(re){ var m=txt.match(re); return m?m[1].trim():''; }
+        var player=rx(/اللاعب\\s*:?\\s*([^\\n(]{2,30})/);
+        var pop=rx(/السكان\\s*:?\\s*([0-9]+)/);
+        var coords=txt.match(/\\((-?\\d{1,4})\\s*\\|\\s*(-?\\d{1,4})\\)/);
+        var name='';
+        var h=document.querySelector('h1,h2,.title,b');
+        if(h) name=(h.textContent||'').trim();
+        var a2b='';
+        var al=document.querySelector('a[href*="a2b"]');
+        if(al) a2b=al.getAttribute('href')||'';
+        return JSON.stringify({name:name.substring(0,40), player:player, x:coords?parseInt(coords[1],10):0, y:coords?parseInt(coords[2],10):0, population:pop, a2b:a2b.substring(0,60)});
+      }catch(e){ return JSON.stringify({player:'', x:0, y:0, error:e.message}); }
+    })();
+    """
 
     /// كاشف إنذار الهجوم: بيدور على أيقونات/عناصر التحذير الشائعة.
     func readAlert(completion: @escaping ([String]) -> Void) {
@@ -922,11 +979,20 @@ final class GameEngine: NSObject {
       document.querySelectorAll('form').forEach(function(f,fi){
         var parts=[];
         f.querySelectorAll('input,button').forEach(function(i){
-          if(parts.length>=12) return;
-          var s=(i.getAttribute('name')||'?')+'/'+(i.getAttribute('type')||i.tagName.toLowerCase());
+          if(parts.length>=14) return;
+          var ty=i.getAttribute('type')||i.tagName.toLowerCase();
+          var s=(i.getAttribute('name')||'?')+'/'+ty;
           var mx=i.getAttribute('max')||i.getAttribute('data-max');
           if(mx) s+='[max='+mx+']';
-          if(i.getAttribute('type')=='submit'||i.tagName.toLowerCase()=='button'){
+          if(ty=='radio'||ty=='checkbox'){
+            s+='='+(i.getAttribute('value')||'?')+(i.checked?'*':'');
+          } else if(ty=='hidden'){
+            s+='='+(i.value||'').substring(0,20);
+          } else if(ty=='text'||ty=='tel'){
+            var v0=i.getAttribute('value');
+            if(v0) s+='[val='+v0.substring(0,12)+']';
+          }
+          if(ty=='submit'||i.tagName.toLowerCase()=='button'){
             var tx=(i.textContent||i.value||'').trim();
             if(tx) s+='="'+tx.substring(0,15)+'"';
           }
