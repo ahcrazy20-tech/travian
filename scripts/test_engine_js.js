@@ -117,7 +117,10 @@ const H = {
   els: [],
   register(el) { this.els.push(el); return el; },
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
-  querySelectorAll(sel) { return this.els.filter(el => matches(el, sel)); },
+  querySelectorAll(sel) {
+    const sels = sel.split(',').map(x => x.trim());
+    return this.els.filter(el => sels.some(ss => matches(el, ss)));
+  },
 };
 const window = { location: { href: 'https://utatar.com/build?id=34', pathname: '/build', search: '?id=34' } };
 const location = window.location;
@@ -159,7 +162,7 @@ document.body = bar;
 
 // training form (build?id=34 with tf[11..14])
 const inp11 = t('input', { name: 'tf[11]', type: 'tel' });
-const inp12 = t('input', { name: 'tf[12]', type: 'tel' });
+const inp12 = t('input', { name: 'tf[12]', type: 'tel', max: '0' });   // اللعبة بتقول: مش متاح خالص
 const inp14 = t('input', { name: 'tf[14]', type: 'tel', max: '87' });
 const row11 = t('tr', {}, [
   t('td', {}, [t('img', { src: 'img/u/u11.gif', title: 'مقاتل بهراوة' })]),
@@ -180,6 +183,8 @@ const trainForm = t('form', { action: 'build?id=34' }, [
   row11, row12, row14,
   t('button', { type: 'submit' }, [], 'تدريب'),
 ]);
+const maxLink11 = t('a', { href: '#', onclick: 'document.snd[\"tf[11]\"].value=200; return false;' }, [], '200');
+maxLink11.attrs.__rect = { top: 500, width: 30 };   // بعيد عن شريط الموارد في المسح
 const villageLink = t('a', { href: 'karte?d=12345', title: 'قرية (5|8) اللاعب أحمد السكان 45' }, [], 'قرية');
 
 // ==== Run resourcesJS ====
@@ -205,7 +210,7 @@ const trainJS = extractFunc('trainManyJS').replace('var sels=\\(arr);', 'var sel
 let trr = JSON.parse(eval(trainJS));
 console.log('TRAIN RESULT:', JSON.stringify(trr));
 if (!trr.ok) throw new Error('FAIL training submit: ' + trr.message);
-if (inp11.value !== '500') throw new Error('FAIL tf[11] value, got ' + inp11.value);
+if (inp11.value !== '200') throw new Error('FAIL tf[11] capped to 200, got ' + inp11.value);
 if (inp14.value !== '87') throw new Error('FAIL tf[14] value 87, got ' + inp14.value);
 if (!trainForm.children.find(c => c.clicked)) throw new Error('FAIL submit button not clicked');
 
@@ -216,6 +221,16 @@ const mil = JSON.parse(eval(milJS));
 console.log('MILLION:', JSON.stringify(mil));
 if (inp14.value !== '87') throw new Error('FAIL million not capped to 87, got ' + inp14.value);
 console.log('MILLION CAP ✓ (1000000 -> 87)');
+
+// ==== zero-afford: a type with no cap is SKIPPED and nothing is submitted ====
+trainForm.children.forEach(c => { c.clicked = false; c.submitted = false; });
+inp12.value = '';
+const noneJS = extractFunc('trainManyJS').replace('var sels=\\(arr);', 'var sels=' + JSON.stringify([['tf[12]', 5000]]) + ';');
+const none = JSON.parse(eval(noneJS));
+console.log('NO AFFORD:', JSON.stringify(none));
+if (none.ok !== false || none.message.indexOf('مش كفاية') < 0) throw new Error('FAIL zero-afford must refuse: ' + none.message);
+if (inp12.value !== '') throw new Error('FAIL zero-afford must not fill');
+if (trainForm.children.find(c => c.clicked)) throw new Error('FAIL zero-afford must not submit');
 
 // ==== Run homeTroopsJS ====
 const homeTroopsJS = extractStatic('homeTroopsJS');

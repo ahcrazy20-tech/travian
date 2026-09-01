@@ -744,9 +744,19 @@ class WebViewModel: NSObject, ObservableObject {
     
     /// التدريب المستمر المجدول: كل نوع بالعدد الكتابي اللي كتبته — كل trainIntervalMin دقيقة.
     /// force=true يعني البوت واصل الصفحة بنفسه الحالية → يدرب حالا من غير انتظار الفترة.
+    private var intervalNoteShown = false
+
     func injectAutoTrain(force: Bool = false) {
         guard pendingAction == nil, Date() >= trainCooldownUntil else { return }
-        guard force || Date() >= nextQueuedTrainAt else { return }
+        // الفترة بتتحترم دايمًا — حتى لما البوت يوصل الصفحة بنفسه
+        guard Date() >= nextQueuedTrainAt else {
+            if !intervalNoteShown {
+                intervalNoteShown = true
+                let mins = max(1, Int(((nextQueuedTrainAt.timeIntervalSinceNow) / 60.0).rounded(.up)))
+                logActivity("🐴 التدريب الجاي بعد \(mins) دقيقة")
+            }
+            return
+        }
         let catalog = trainingCatalog
         guard !catalog.isEmpty else {
             if !barracksHintShown {
@@ -791,6 +801,7 @@ class WebViewModel: NSObject, ObservableObject {
                         self.barracksPath = Self.trainablePath(from: url)
                     }
                     self.barracksHintShown = false
+                    self.intervalNoteShown = false
                     self.nextQueuedTrainAt = Date().addingTimeInterval(TimeInterval(self.trainIntervalMin * 60))
                     self.markSubmitBusy()
                     self.logActivity("🐴 تدريب مجدول: \(msg) — الجاية بعد \(self.trainIntervalMin) دقيقة")
@@ -805,6 +816,12 @@ class WebViewModel: NSObject, ObservableObject {
                             }
                         }
                     }
+                } else if msg.contains("مش كفاية") {
+                    // واقفين في الثكنة والموارد خلصت: مفيش لازمة نبعث فاضي أو نتنقل — نستنى وننجح بعدين
+                    let wait = max(1, min(self.trainIntervalMin, 5))
+                    self.nextQueuedTrainAt = Date().addingTimeInterval(TimeInterval(wait * 60))
+                    self.intervalNoteShown = false
+                    self.logActivity("🌵 \(msg) — هجرب تاني بعد \(wait) دقيقة")
                 } else {
                     self.gotoBarracks(failReason: msg)
                 }

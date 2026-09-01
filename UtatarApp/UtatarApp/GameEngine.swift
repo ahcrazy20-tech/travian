@@ -352,7 +352,8 @@ final class GameEngine: NSObject {
           if(isNaN(mm)) mm=parseInt(inp.getAttribute('data-max'),10);
           if(!isNaN(mm)&&mm>0) max=mm;
           if(!max){
-            var mx=document.querySelector('a[href*="'+n+'.value="]');
+            var bare=n.replace('[','').replace(']','');
+            var mx=document.querySelector('a[href*="'+n+'.value="], a[onclick*="'+n+'"], a[onclick*="'+bare+'"]');
             if(mx){ var v=pi(mx.textContent); if(v>0) max=v; }
           }
           if(!max&&row){
@@ -440,15 +441,20 @@ final class GameEngine: NSObject {
               var inp=scope.querySelector('input[name="'+s[0]+'"]');
               if(!inp) return;
               // الحد الفعلي دلوقتي: من اللينك اللي بيعرض الأقصى أو من attribute max
-              var mx=document.querySelector('a[href*="'+s[0]+'.value="]');
+              var mx=document.querySelector('a[href*="'+s[0]+'.value="], a[onclick*="'+s[0]+'"], a[onclick*="'+s[0].replace('[','').replace(']','')+'"]');
               var mv=mx?pi(mx.textContent):0;
-              var attr=parseInt(inp.getAttribute('max'),10);
-              if(isNaN(attr)) attr=parseInt(inp.getAttribute('data-max'),10);
+              var attrRaw=inp.getAttribute('max');
+              if(attrRaw===null) attrRaw=inp.getAttribute('data-max');
+              var attr=(attrRaw===null)?NaN:parseInt(attrRaw,10);
               var cap=(mv>0)?mv:((!isNaN(attr)&&attr>0)?attr:0);
-              // العدد الكتابي = سقف مطلوب؛ بندرّب أقصى ما الموارد تسمح بيه فعليًا
+              // العدد الكتابي = سقف مطلوب؛ بندرّب أقصى ما الموارد تسمح بيه فعليًا.
+              // اللعبة نفسها بتقول صفر (لينك 0 أو max=0)؟ → متبعتش (الخادم كان هي skill الطلب)
+              // مفيش معلومة خالص؟ نبععت العدد المطلوب والخادم هو اللي هيقيد.
+              var knownZero = (mx && mv<=0) || (!isNaN(attr) && attr<=0);
+              if(knownZero) return;
               var v=s[1];
               if(cap>0 && v>cap) v=cap;
-              if(!(v>0)) v=(cap>0?cap:1);
+              if(!(v>0)) v=1;
               var n=String(v);
               var proto=HTMLInputElement.prototype;
               var setter=Object.getOwnPropertyDescriptor(proto,'value').set;
@@ -457,7 +463,7 @@ final class GameEngine: NSObject {
               inp.dispatchEvent(new Event('change',{bubbles:true}));
               filled++;
             });
-            if(filled===0) return JSON.stringify({ok:false,filled:0,message:'لم أجد حقول التدريب'});
+            if(filled===0) return JSON.stringify({ok:false,filled:0,message:'الموارد مش كفاية لتدريب أي نوع دلوقتي (الحد=0)'});
             // ===== توأمة الأسماء: المعالج الأصلي بيقرا t11.. (بدون أقواس) وبيشترط ft/id/s1
             if(form){
               scope.querySelectorAll('input[name]').forEach(function(inp){
