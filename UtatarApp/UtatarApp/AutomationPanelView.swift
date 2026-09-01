@@ -345,26 +345,56 @@ struct TrainingCard: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack {
-                Text("🏗️ التدريب (افتح الثكنات)")
+                Text("🏗️ التدريب")
                     .font(.caption)
                     .foregroundColor(.gray)
                 Spacer()
-                Stepper("تلقائي: \(viewModel.autoTrainCount)", value: $viewModel.autoTrainCount, in: 1...10000)
-                    .font(.caption2)
-                    .foregroundColor(.white)
+                Toggle("", isOn: $viewModel.autoTrainTroops)
+                    .utatarTint(.green)
+                    .labelsHidden()
+                    .frame(width: 60)
             }
 
-            if viewModel.trainableUnits.isEmpty {
-                Text("افتح الثكنات من داخل اللعبة وأنا هكتشف أنواع الجنود لوحدي — والتدريب التلقائي هيدرب بكل نوع بعدد «تلقائي»")
+            Text("البوت بيلقط أنواع الجنود أول ما تفتح الثكنة أو الإسطبل ويحفظهم دايمًا — حدد اللي عايزه واكتب العدد (حتى مليون)")
+                .font(.caption2)
+                .foregroundColor(.gray)
+
+            HStack(spacing: 8) {
+                Text("يدرب كل:")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                TextField("10", text: Binding(
+                    get: { "\(viewModel.trainIntervalMin)" },
+                    set: { viewModel.trainIntervalMin = max(1, Int($0.filter { $0.isNumber }) ?? 10) }
+                ))
+                .keyboardType(.numberPad)
+                .font(.caption)
+                .foregroundColor(.white)
+                .frame(width: 55)
+                .textFieldStyle(.roundedBorder)
+                Text("دقيقة")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                Spacer()
+                if !viewModel.savedUnitIds.isEmpty {
+                    Text("🎒 محفوظ: \(viewModel.savedUnitIds.count) نوع")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                }
+            }
+
+            if viewModel.trainingCatalog.isEmpty {
+                Text("افتح الثكنة أو الإسطبل مرة واحدة في اللعبة — هيلقط الأنواع ويحفظها هنا للأبد، حتى لو خرجت من الصفحة")
                     .font(.caption2)
                     .foregroundColor(.gray)
             } else {
-                ForEach(viewModel.trainableUnits) { unit in
+                ForEach(viewModel.trainingCatalog) { unit in
                     TrainRow(viewModel: viewModel, unit: unit)
                 }
+
                 if hasRealMax {
                     Button(action: { trainAllMax() }) {
-                        Text("درّب الأقصى لكل نوع")
+                        Text("درّب الأقصى لكل نوع (مرة واحدة دلوقتي)")
                             .font(.caption2)
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
@@ -373,6 +403,7 @@ struct TrainingCard: View {
                             .cornerRadius(6)
                     }
                 }
+
                 Button(action: { viewModel.testTrainOnce() }) {
                     Text("🔬 تجربة تشخيص: درّب 1 من كل نوع")
                         .font(.caption2)
@@ -382,9 +413,6 @@ struct TrainingCard: View {
                         .background(Color.blue.opacity(0.8))
                         .cornerRadius(6)
                 }
-                Text("الزرار ده للتشخيص بس: بيملأ 1 من كل نوع ويدرس، وبعدها بيقولك في السجل هل اللعبة قبلت ولا رفضت وبنص ردها")
-                    .font(.caption2)
-                    .foregroundColor(.gray.opacity(0.8))
             }
         }
         .padding()
@@ -417,12 +445,17 @@ struct TrainRow: View {
     var body: some View {
         VStack(spacing: 4) {
             HStack {
-                Text(unit.name.isEmpty ? GameEngine.arabicUnitName(Int(unit.id.replacingOccurrences(of: "t", with: "")) ?? 0) : unit.name)
+                Text(unit.name.isEmpty ? GameEngine.arabicUnitName(unit.unitId) : unit.name)
                     .font(.caption)
                     .foregroundColor(.white)
+                if viewModel.savedUnitIds.contains(unit.id) {
+                    Text("✓ محفوظ")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                }
                 Spacer()
                 if unit.max > 0 {
-                    Text("الحد: \(unit.max)")
+                    Text("متاح دلوقتي: \(unit.max)")
                         .font(.caption2)
                         .foregroundColor(.blue)
                 }
@@ -458,6 +491,9 @@ struct TrainRow: View {
                 }
             }
 
+            Text("اكتب أي عدد (100 أو 1000000) — كل جولة هيدرب أقصى ما الموارد تسمح بيه")
+                .font(.caption2)
+                .foregroundColor(.gray.opacity(0.7))
             if unit.costWood > 0 {
                 Text("التكلفة للواحد: 🪵\(unit.costWood) 🧱\(unit.costClay) ⚙️\(unit.costIron) 🌾\(unit.costCrop)")
                     .font(.caption2)
@@ -468,7 +504,8 @@ struct TrainRow: View {
     }
 
     private func trainNow() {
-        let count = Int(viewModel.trainCounts[unit.id] ?? "") ?? 0
+        let raw = (viewModel.trainCounts[unit.id] ?? "").filter { $0.isNumber }
+        let count = Int(raw) ?? 0
         guard count > 0 else {
             viewModel.gameLog = "اكتب العدد الأول"
             return

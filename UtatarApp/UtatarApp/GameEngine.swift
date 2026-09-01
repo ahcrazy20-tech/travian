@@ -39,6 +39,7 @@ struct HomeUnit: Identifiable, Equatable {
 struct TrainableUnit: Identifiable, Equatable {
     let id: String     // اسم الـ input الحقيقي في الفورم (t1..t10)
     var name: String
+    var unitId = 0     // رقم الوحدة (11=مقاتل بهراوة، 14=كشاف...)
     var max = 0        // الحد الأقصى القابل للتدريب دلوقتي (من اللعبة نفسها)
     var costWood = 0
     var costClay = 0
@@ -297,6 +298,7 @@ final class GameEngine: NSObject {
                 guard !input.isEmpty else { continue }
                 var u = TrainableUnit(id: input, name: item["name"] as? String ?? "")
                 let uid = Self.int(item["uid"])
+                u.unitId = uid
                 if u.name.isEmpty && uid > 0 {
                     u.name = GameEngine.arabicUnitName(uid)
                 }
@@ -389,6 +391,14 @@ final class GameEngine: NSObject {
     }
 
     /// يدرّب كل نوع بالعدد الأقصى المسموح (يستخدم قيم max الحقيقية من الصفحة).
+    /// تدريب بأنواع وأعداد مخصصة (inputName, count) — مع كاب تلقائي بالموارد المتاحة.
+    func trainSelected(_ pairs: [(String, Int)], completion: @escaping (Bool, String) -> Void) {
+        runJSON(Self.trainManyJS(pairs)) { obj in
+            let ok = (obj?["ok"] as? Bool) ?? false
+            completion(ok, (obj?["message"] as? String) ?? (ok ? "تم" : "فشل"))
+        }
+    }
+
     func trainAllMax(_ units: [TrainableUnit], completion: ((String) -> Void)? = nil) {
         let js = Self.trainManyJS(units.map { ($0.id, $0.max > 0 ? $0.max : 0) })
         runJSON(js) { obj in
@@ -429,12 +439,16 @@ final class GameEngine: NSObject {
             sels.forEach(function(s){
               var inp=scope.querySelector('input[name="'+s[0]+'"]');
               if(!inp) return;
+              // الحد الفعلي دلوقتي: من اللينك اللي بيعرض الأقصى أو من attribute max
+              var mx=document.querySelector('a[href*="'+s[0]+'.value="]');
+              var mv=mx?pi(mx.textContent):0;
+              var attr=parseInt(inp.getAttribute('max'),10);
+              if(isNaN(attr)) attr=parseInt(inp.getAttribute('data-max'),10);
+              var cap=(mv>0)?mv:((!isNaN(attr)&&attr>0)?attr:0);
+              // العدد الكتابي = سقف مطلوب؛ بندرّب أقصى ما الموارد تسمح بيه فعليًا
               var v=s[1];
-              if(!(v>0)){
-                var mx=document.querySelector('a[href*="'+s[0]+'.value="]');
-                var mv=mx?pi(mx.textContent):0;
-                v=(mv>0)?mv:1;
-              }
+              if(cap>0 && v>cap) v=cap;
+              if(!(v>0)) v=(cap>0?cap:1);
               var n=String(v);
               var proto=HTMLInputElement.prototype;
               var setter=Object.getOwnPropertyDescriptor(proto,'value').set;
@@ -444,10 +458,60 @@ final class GameEngine: NSObject {
               filled++;
             });
             if(filled===0) return JSON.stringify({ok:false,filled:0,message:'لم أجد حقول التدريب'});
+            // ===== توأمة الأسماء: المعالج الأصلي بيقرا t11.. (بدون أقواس) وبيشترط ft/id/s1
+            if(form){
+              scope.querySelectorAll('input[name]').forEach(function(inp){
+                var nm=inp.getAttribute('name')||'';
+                var v=parseInt(inp.value,10);
+                var m=nm.match(/^t(f)?\\[(\\d{1,2})\\]$/);
+                if(m && v>0 && !scope.querySelector('input[name="t'+m[2]+'"]')){
+                  var h=document.createElement('input');
+                  h.setAttribute('type','hidden'); h.setAttribute('name','t'+m[2]); h.setAttribute('value',String(v));
+                  form.appendChild(h);
+                }
+              });
+              if(!form.querySelector('input[name="ft"]')){
+                var ft=document.createElement('input');
+                ft.setAttribute('type','hidden'); ft.setAttribute('name','ft'); ft.setAttribute('value','t1');
+                form.appendChild(ft);
+              }
+              if(!form.querySelector('input[name="id"]')){
+                var idm=(location.pathname+location.search).match(/id=(\\d+)/);
+                var idh=document.createElement('input');
+                idh.setAttribute('type','hidden'); idh.setAttribute('name','id'); idh.setAttribute('value',idm?idm[1]:'34');
+                form.appendChild(idh);
+              }
+              if(!form.querySelector('input[name="s1"]')){
+                var s1=document.createElement('input');
+                s1.setAttribute('type','hidden'); s1.setAttribute('name','s1'); s1.setAttribute('value','ok');
+                form.appendChild(s1);
+              }
+            }
             var btn=scope.querySelector('button[type="submit"], input[type="submit"], button[name="s"], input[type="image"], button:not([type])');
             if(btn){ btn.click(); }
             else if(scope.requestSubmit){ scope.requestSubmit(); }
             else { return JSON.stringify({ok:false,filled:filled,message:'وجدت الحقول لكن لا يوجد زر تدريب'}); }
+            try{ window.addEventListener('pagehide', function(){ window.__utatarNav=true; }, {once:true}); }catch(e4){}
+            setTimeout(function(){
+              try{
+                if(!window.__utatarNav && form && document.body && document.body.contains(form)){
+                  if(btn && form.requestSubmit){ form.requestSubmit(btn); }
+                  else if(btn){ btn.click(); }
+                  else if(form.submit){ form.submit(); }
+                }
+              }catch(e3){}
+            }, 1500);
+            setTimeout(function(){
+              try{
+                var alive = document.body && form && document.body.contains(form);
+                var errs='';
+                document.querySelectorAll('[class*="error"],[class*="err"],[class*="alert"],[class*="notif"]').forEach(function(e){
+                  var t2=(e.textContent||'').trim();
+                  if(t2.length>0 && t2.length<160) errs += ' | '+t2;
+                });
+                window.__utatarTrainCheck = alive ? ('still'+errs) : 'gone';
+              }catch(e2){}
+            }, 4000);
             return JSON.stringify({ok:true,filled:filled,message:'بدأ التدريب ('+filled+' حقل)'});
           }catch(e){ return JSON.stringify({ok:false,filled:0,message:e.message}); }
         })();

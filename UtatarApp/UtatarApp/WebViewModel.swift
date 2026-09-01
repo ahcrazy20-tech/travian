@@ -63,6 +63,11 @@ class WebViewModel: NSObject, ObservableObject {
     @Published var barracksPath: String = "" { didSet { UD.set(barracksPath, forKey: "barracksPath") } }
     /// مهلة بعد تدريب ناجح: منكررش التدريب على اللعبة كل 30 ثانية
     private var trainCooldownUntil = Date.distantPast
+    /// أنواع الجنود الملقوطة من الثكنة — محفوظة دايمًا حتى لو خرجت من الصفحة
+    @Published var savedTroopTypes: [[String: Any]] = [] { didSet { UD.set(savedTroopTypes, forKey: "savedTroopTypes") } }
+    /// الدقيقة اللي هيتدرب بعدها تاني (التدريب المستمر)
+    @Published var trainIntervalMin: Int = 10 { didSet { UD.set(trainIntervalMin, forKey: "trainIntervalMin") } }
+    private var nextQueuedTrainAt = Date.distantPast
     private var barracksHintShown = false
     /// خلايا الخريطة اللي البوت زارها (dorf3?id=) — عشان ما يزورش نفس الخلية تاني
     private var exploredCells = Set<String>()
@@ -121,6 +126,8 @@ class WebViewModel: NSObject, ObservableObject {
         }
         pageRecords = UD.string(forKey: "pageRecords") ?? ""
         barracksPath = UD.string(forKey: "barracksPath") ?? ""
+        savedTroopTypes = (UD.array(forKey: "savedTroopTypes") as? [[String: Any]]) ?? []
+        trainIntervalMin = UD.object(forKey: "trainIntervalMin") == nil ? 10 : max(1, UD.integer(forKey: "trainIntervalMin"))
         setupTimer()
         setupLifecycleWatchers()
         if isAutomationEnabled {
@@ -331,6 +338,8 @@ class WebViewModel: NSObject, ObservableObject {
                 if !units.isEmpty, kind == "build", let url = self.webView?.url {
                     self.barracksPath = Self.trainablePath(from: url)
                 }
+                // اللقط الدائم: أي أنواع جديدة تظهر → تتخزن للأبد
+                self.captureTroopTypes(units)
                 self.trainableUnits = units
             }
         }
@@ -427,10 +436,10 @@ class WebViewModel: NSObject, ObservableObject {
         refreshGameData()
         advancePendingAction()
         recordCurrentPageIfNeeded()
-        // البوت وصل لصفحة مبنية بعد تنقل هو نفسه عمله؟ نجرّب التدريب فورًا من غير ما نستنى الدورة
+        // البوت وصل لصفحة مبنية بعد تنقل هو نفسه عمله؟ يدرب حالا (من غير انتظار الفترة)
         if isAutomationEnabled, autoTrainTroops, pendingAction == nil, pageKind == "build",
            Date().timeIntervalSince(lastBotNavAt) < 20 {
-            injectAutoTrain()
+            injectAutoTrain(force: true)
         }
         // البوت زار خلية خريطة (dorf3?id=)؟ نتعرف عليها: فيها لاعب؟ نتجسسها. فاضية؟ نكمل.
         if isAutomationEnabled, autoSpyEnabled, pendingAction == nil,
@@ -733,30 +742,65 @@ class WebViewModel: NSObject, ObservableObject {
         }
     }
     
-    func injectAutoTrain() {
-        // لو في مهمة إرسال شغالة ما نعرفش نقطعها + مهلة بعد كل تدريب ناجح
+    /// التدريب المستمر المجدول: كل نوع بالعدد الكتابي اللي كتبته — كل trainIntervalMin دقيقة.
+    /// force=true يعني البوت واصل الصفحة بنفسه الحالية → يدرب حالا من غير انتظار الفترة.
+    func injectAutoTrain(force: Bool = false) {
         guard pendingAction == nil, Date() >= trainCooldownUntil else { return }
-        let c = autoTrainCount
-        engine.trainBlind(count: c) { [weak self] ok, msg in
+        guard force || Date() >= nextQueuedTrainAt else { return }
+        let catalog = trainingCatalog
+        guard !catalog.isEmpty else {
+            if !barracksHintShown {
+                barracksHintShown = true
+                logActivity("🐴 التدريب المستمر: افتح الثكنة/الإسطبل مرة واحدة عشان ألقط الأنواع وأحفظها عندى")
+            }
+            return
+        }
+        // الأنواع المحددة: العدد المكتوب (أي رقم — حتى مليون). الفاضي = مش هيتدرب.
+        var pairs: [(String, Int)] = []
+        for u in catalog {
+            let raw = (trainCounts[u.id] ?? "").filter { $0.isNumber }
+            if let n = Int(raw), n > 0 { pairs.append((u.id, n)) }
+        }
+        guard !pairs.isEmpty else {
+            if !barracksHintShown {
+                barracksHintShown = true
+                logActivity("🐴 اكتب العدد جنب كل نوع عايز تدربه (أي رقم كتابي — 100 أو 1000000)")
+            }
+            return
+        }
+        if pageKind == "build" {
+            fireTraining(pairs)
+        } else if !barracksPath.isEmpty {
+            if !barracksHintShown {
+                barracksHintShown = true
+                logActivity("🐴 التدريب المستمر: رايح الثكنة (\(barracksPath))")
+            }
+            navigate(path: barracksPath)
+        } else {
+            gotoBarracks(failReason: "التدريب المستمر محتاج الثكنة")
+        }
+    }
+
+    /// تنفيذ التدريب الفعلي + ضبط الفترة الجاية + التحقق من قبول اللعبة.
+    private func fireTraining(_ pairs: [(String, Int)]) {
+        engine.trainSelected(pairs) { [weak self] ok, msg in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if ok {
-                    // اتعلم عنوان الثكنة من الصفحة الحالية، وامنع تكرار التدريب لمدة ربع ساعة
                     if let url = self.webView?.url {
                         self.barracksPath = Self.trainablePath(from: url)
                     }
                     self.barracksHintShown = false
-                    self.trainCooldownUntil = Date().addingTimeInterval(15 * 60)
+                    self.nextQueuedTrainAt = Date().addingTimeInterval(TimeInterval(self.trainIntervalMin * 60))
                     self.markSubmitBusy()
-                    self.logActivity("🐴 تدريب تلقائي: \(msg) — التدريب الجاي بعد ربع ساعة")
-                    // التحقق بعد ثانيتين: لو الفورم لسه مكانها يبقى اللعبة رفضت — نسجل ردها
+                    self.logActivity("🐴 تدريب مجدول: \(msg) — الجاية بعد \(self.trainIntervalMin) دقيقة")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
                         guard let self = self else { return }
                         self.engine.trainCheck { state in
                             DispatchQueue.main.async {
                                 if state.hasPrefix("still") {
                                     let reply = String(state.dropFirst(5))
-                                    self.logActivity("⚠️ اللعبة ما قبلتش التدريب — رد اللعبة:\(reply.isEmpty ? " (مفيش رسالة)" : reply)")
+                                    self.logActivity("⚠️ اللعبة ما قبلتش — ردها:\(reply.isEmpty ? " (مفيش رسالة)" : reply)")
                                 }
                             }
                         }
@@ -765,6 +809,42 @@ class WebViewModel: NSObject, ObservableObject {
                     self.gotoBarracks(failReason: msg)
                 }
             }
+        }
+    }
+
+    /// كتالوج التدريب: الحي لو موجود، وإلا الملقوطة المحفوظة
+    var trainingCatalog: [TrainableUnit] {
+        if !trainableUnits.isEmpty { return trainableUnits }
+        return Self.decodeUnits(savedTroopTypes)
+    }
+
+    var savedUnitIds: Set<String> {
+        Set(savedTroopTypes.compactMap { $0["id"] as? String })
+    }
+
+    private func captureTroopTypes(_ units: [TrainableUnit]) {
+        guard !units.isEmpty else { return }
+        let newIds = Set(units.map { $0.id })
+        let oldIds = Set(savedTroopTypes.compactMap { $0["id"] as? String })
+        guard newIds != oldIds else { return }
+        savedTroopTypes = Self.encodeUnits(units)
+        logActivity("🎒 لقطت \(units.count) نوع جنود وحفظتهم دايمًا — تقدر تحدد اللي تحبه وتكتب العدد")
+    }
+
+    private static func encodeUnits(_ units: [TrainableUnit]) -> [[String: Any]] {
+        units.map { ["id": $0.id, "name": $0.name, "max": $0.max, "costW": $0.costWood, "costC": $0.costClay, "costI": $0.costIron, "costCr": $0.costCrop] as [String: Any] }
+    }
+
+    private static func decodeUnits(_ arr: [[String: Any]]) -> [TrainableUnit] {
+        arr.compactMap { d in
+            guard let id = d["id"] as? String else { return nil }
+            var u = TrainableUnit(id: id, name: d["name"] as? String ?? "")
+            u.max = d["max"] as? Int ?? 0
+            u.costWood = d["costW"] as? Int ?? 0
+            u.costClay = d["costC"] as? Int ?? 0
+            u.costIron = d["costI"] as? Int ?? 0
+            u.costCrop = d["costCr"] as? Int ?? 0
+            return u
         }
     }
 

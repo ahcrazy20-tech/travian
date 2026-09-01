@@ -209,6 +209,14 @@ if (inp11.value !== '500') throw new Error('FAIL tf[11] value, got ' + inp11.val
 if (inp14.value !== '87') throw new Error('FAIL tf[14] value 87, got ' + inp14.value);
 if (!trainForm.children.find(c => c.clicked)) throw new Error('FAIL submit button not clicked');
 
+// ==== typed-million semantics: 1000000 gets capped to what resources allow (87) ====
+const pairsMil = JSON.stringify([['tf[14]', 1000000]]);
+const milJS = extractFunc('trainManyJS').replace('var sels=\\(arr);', 'var sels=' + pairsMil + ';');
+const mil = JSON.parse(eval(milJS));
+console.log('MILLION:', JSON.stringify(mil));
+if (inp14.value !== '87') throw new Error('FAIL million not capped to 87, got ' + inp14.value);
+console.log('MILLION CAP ✓ (1000000 -> 87)');
+
 // ==== Run homeTroopsJS ====
 const homeTroopsJS = extractStatic('homeTroopsJS');
 const homeRes = JSON.parse(eval(homeTroopsJS));
