@@ -129,6 +129,9 @@ struct AutomationPanelView: View {
                         // ===== القرى المكتشفة + التجسس =====
                         VillagesCard(viewModel: viewModel)
 
+                        // ===== الهجوم والهروب =====
+                        DefenseCard(viewModel: viewModel)
+
                         // ===== تقارير التجسس =====
                         SpyReportsCard(viewModel: viewModel)
 
@@ -330,6 +333,10 @@ struct HomeTroopsCard: View {
 struct TrainingCard: View {
     @ObservedObject var viewModel: WebViewModel
 
+    private var hasRealMax: Bool {
+        viewModel.trainableUnits.contains { $0.max > 0 }
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             HStack {
@@ -337,26 +344,29 @@ struct TrainingCard: View {
                     .font(.caption)
                     .foregroundColor(.gray)
                 Spacer()
-                if !viewModel.trainableUnits.isEmpty {
-                    Button(action: { trainAllMax() }) {
-                        Text("درّب الأقصى")
-                            .font(.caption2)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.green.opacity(0.8))
-                            .cornerRadius(6)
-                    }
-                }
+                Stepper("تلقائي: \(viewModel.autoTrainCount)", value: $viewModel.autoTrainCount, in: 1...10000)
+                    .font(.caption2)
+                    .foregroundColor(.white)
             }
 
             if viewModel.trainableUnits.isEmpty {
-                Text("افتح الثكنات من داخل اللعبة (تدريب جنود) وأنا هكتشف أنواع الجنود والحد الأقصى والتكلفة لوحدي")
+                Text("افتح الثكنات من داخل اللعبة وأنا هكتشف أنواع الجنود لوحدي — والتدريب التلقائي هيدرب بكل نوع بعدد «تلقائي»")
                     .font(.caption2)
                     .foregroundColor(.gray)
             } else {
                 ForEach(viewModel.trainableUnits) { unit in
                     TrainRow(viewModel: viewModel, unit: unit)
+                }
+                if hasRealMax {
+                    Button(action: { trainAllMax() }) {
+                        Text("درّب الأقصى لكل نوع")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(Color.green.opacity(0.8))
+                            .cornerRadius(6)
+                    }
                 }
             }
         }
@@ -379,7 +389,13 @@ struct TrainingCard: View {
 struct TrainRow: View {
     @ObservedObject var viewModel: WebViewModel
     let unit: TrainableUnit
-    @State private var countText: String = ""
+
+    private var countBinding: Binding<String> {
+        Binding(
+            get: { viewModel.trainCounts[unit.id] ?? "" },
+            set: { viewModel.trainCounts[unit.id] = $0 }
+        )
+    }
 
     var body: some View {
         VStack(spacing: 4) {
@@ -397,7 +413,7 @@ struct TrainRow: View {
 
             let affordableNow = unit.affordable(with: viewModel.gameResources ?? GameResources())
             HStack(spacing: 8) {
-                TextField("العدد", text: $countText)
+                TextField("العدد", text: countBinding)
                     .keyboardType(.numberPad)
                     .font(.caption)
                     .foregroundColor(.white)
@@ -405,7 +421,7 @@ struct TrainRow: View {
                     .textFieldStyle(.roundedBorder)
 
                 if affordableNow > 0 {
-                    Button(action: { countText = "\(affordableNow)" }) {
+                    Button(action: { viewModel.trainCounts[unit.id] = "\(affordableNow)" }) {
                         Text("الأقصى الممكن (\(affordableNow))")
                             .font(.caption2)
                             .foregroundColor(.yellow)
@@ -435,7 +451,7 @@ struct TrainRow: View {
     }
 
     private func trainNow() {
-        let count = Int(countText) ?? 0
+        let count = Int(viewModel.trainCounts[unit.id] ?? "") ?? 0
         guard count > 0 else {
             viewModel.gameLog = "اكتب العدد الأول"
             return
@@ -472,16 +488,41 @@ struct VillagesCard: View {
                             .background(Color.blue.opacity(0.8))
                             .cornerRadius(6)
                     }
-                    Button(action: { viewModel.spyFromCurrentPage() }) {
-                        Text("جسّس من الصفحة الحالية")
-                            .font(.caption2)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.purple.opacity(0.8))
-                            .cornerRadius(6)
-                    }
                 }
+
+            HStack(spacing: 8) {
+                TextField("X", text: $viewModel.manualSpyX)
+                    .keyboardType(.numberPad)
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .frame(width: 55)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Y", text: $viewModel.manualSpyY)
+                    .keyboardType(.numberPad)
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .frame(width: 55)
+                    .textFieldStyle(.roundedBorder)
+                Button(action: { viewModel.spyFromManualCoords() }) {
+                    Text("🕵️ جسّس")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.purple.opacity(0.85))
+                        .cornerRadius(6)
+                }
+                Button(action: { viewModel.attackFromManualCoords() }) {
+                    Text("⚔️ هاجم")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.red.opacity(0.85))
+                        .cornerRadius(6)
+                }
+                Spacer()
+            }
             }
 
             if viewModel.mapVillages.isEmpty {
@@ -532,13 +573,22 @@ struct VillageCardRow: View {
 
             Spacer()
 
-            Button(action: { viewModel.startSpy(village) }) {
-                Text("🕵️ جسّس")
+            Button(action: { viewModel.startSpy(x: village.x, y: village.y, name: village.name) }) {
+                Text("🕵️")
                     .font(.caption2)
                     .foregroundColor(.white)
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, 8)
                     .padding(.vertical, 6)
                     .background(Color.purple.opacity(0.85))
+                    .cornerRadius(6)
+            }
+            Button(action: { viewModel.startAttack(x: village.x, y: village.y, name: village.name) }) {
+                Text("⚔️")
+                    .font(.caption2)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.red.opacity(0.85))
                     .cornerRadius(6)
             }
         }
@@ -573,6 +623,86 @@ struct SpyReportsCard: View {
                 ForEach(viewModel.spyReports) { report in
                     SpyReportRow(report: report)
                 }
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - كارت الهجوم والهروب
+
+struct DefenseCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("🛡️ الهروب عند الإنذار")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                Toggle("", isOn: $viewModel.autoRetreatEnabled)
+                    .utatarTint(.red)
+                    .labelsHidden()
+                    .frame(width: 60)
+            }
+
+            Text("لما تظهر علامة التنبيه الحمرا في اللعبة، البوت هيبعت كل جنودك لوجهة الهروب (تعزيز) تلقائياً.")
+                .font(.caption2)
+                .foregroundColor(.gray)
+
+            HStack(spacing: 8) {
+                Text("واحة الهروب:")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                TextField("X", text: Binding(
+                    get: { viewModel.retreatX == 0 ? "" : "\(viewModel.retreatX)" },
+                    set: { viewModel.retreatX = Int($0) ?? 0 }
+                ))
+                .keyboardType(.numberPad)
+                .font(.caption)
+                .foregroundColor(.white)
+                .frame(width: 60)
+                .textFieldStyle(.roundedBorder)
+                TextField("Y", text: Binding(
+                    get: { viewModel.retreatY == 0 ? "" : "\(viewModel.retreatY)" },
+                    set: { viewModel.retreatY = Int($0) ?? 0 }
+                ))
+                .keyboardType(.numberPad)
+                .font(.caption)
+                .foregroundColor(.white)
+                .frame(width: 60)
+                .textFieldStyle(.roundedBorder)
+
+                Button(action: { viewModel.startRetreat(auto: false) }) {
+                    Text("اختبر الهروب")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.orange.opacity(0.85))
+                        .cornerRadius(6)
+                }
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                Text("عدد الهجوم اليدوي:")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                TextField("50", text: Binding(
+                    get: { "\(viewModel.autoAttackCount)" },
+                    set: { viewModel.autoAttackCount = Int($0) ?? 50 }
+                ))
+                .keyboardType(.numberPad)
+                .font(.caption)
+                .foregroundColor(.white)
+                .frame(width: 70)
+                .textFieldStyle(.roundedBorder)
+                Spacer()
             }
         }
         .padding()

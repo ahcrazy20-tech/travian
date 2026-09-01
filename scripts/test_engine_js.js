@@ -74,7 +74,10 @@ class Element {
     return null;
   }
   click() { this.clicked = true; if (this.onclickHandler) this.onclickHandler(); }
-  get value() { return this._value || ''; }
+  get value() {
+    if (this._value !== undefined) return String(this._value);
+    return this.getAttribute('value') || '';
+  }
   set value(v) { this._value = String(v); }
   dispatchEvent(ev) { return true; }
   requestSubmit() { this.submitted = true; }
@@ -234,16 +237,41 @@ const sendForm = t('form', { action: 'a2b' }, [
   ]),
   t('input', { name: 'x' }),
   t('input', { name: 'y' }),
-  t('input', { name: 'c', type: 'radio', value: '4' }),
+  t('input', { name: 'c', type: 'radio', value: '1' }),
+  t('input', { name: 'c', type: 'radio', value: '2' }),
+  t('input', { name: 'c', type: 'radio', value: '3' }),
   t('button', { type: 'submit' }, [], 'إرسال'),
 ]);
-const scoutJS = extractFunc('scoutSendJS').replace(/\\\((count)\)/g, '3');
-// note: \(count) appears twice; emulate Swift interpolation with 3
-const scoutRes = JSON.parse(eval(extractFunc('scoutSendJS').split('\\(count)').join('3')));
+const xi = sendForm.children.find(c => c.getAttribute('name') === 'x');
+const yi = sendForm.children.find(c => c.getAttribute('name') === 'y');
+xi.value = ''; yi.value = '';
+axeInp.value = ''; scoutInp.value = '';
+const sendJS = extractFunc('sendTroopsJS')
+  .split('\\(x)').join('12').split('\\(y)').join('34')
+  .replace('var pairs=\\(arr);', 'var pairs=[[14,3]];')
+  .replace('var modeVals=\\(mv);', 'var modeVals=[3,4,2];');
+const scoutRes = JSON.parse(eval(sendJS));
 console.log('SCOUT:', JSON.stringify(scoutRes));
 if (!scoutRes.sent) throw new Error('FAIL scout send: ' + scoutRes.message);
 if (scoutInp.value !== '3') throw new Error('FAIL scout value 3, got ' + scoutInp.value);
 if (axeInp.value) throw new Error('FAIL axe must stay empty');
+if (xi.value !== '12' || yi.value !== '34') throw new Error('FAIL coords not filled: ' + xi.value + ',' + yi.value);
+const radios = sendForm.querySelectorAll('input[name="c"]');
+const raidClicked = radios.find(r => r.clicked);
+if (!raidClicked || raidClicked.getAttribute('value') !== '3') {
+  console.log('DBG radios found:', radios.length, radios.map(r => ({v: r.getAttribute('value'), val: r.value, clicked: r.clicked})));
+  console.log('DBG modeVals line:', (sendJS.split('\n').find(l => l.includes('modeVals')) || '').trim());
+  throw new Error('FAIL raid radio value 3 not clicked');
+}
 if (!sendForm.children.find(c => c.clicked)) throw new Error('FAIL send button not clicked');
+
+// ==== trainBlindJS: fills every tf[..] input with count (capped by max) and submits ====
+inp11.value = ''; inp12.value = ''; inp14.value = '';
+const blindJS = extractFunc('trainBlindJS').split('\\(count)').join('500');
+const blindRes = JSON.parse(eval(blindJS));
+console.log('BLIND:', JSON.stringify(blindRes));
+if (!blindRes.ok) throw new Error('FAIL trainBlind: ' + blindRes.message);
+if (inp11.value !== '500') throw new Error('FAIL blind tf[11]=500, got ' + inp11.value);
+if (inp14.value !== '87') throw new Error('FAIL blind tf[14] capped to 87, got ' + inp14.value);
 
 console.log('\nALL JS TESTS PASSED ✅');

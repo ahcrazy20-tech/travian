@@ -15,6 +15,23 @@ class WebViewModel: NSObject, ObservableObject {
     @Published var autoBuildQueue: Bool = false { didSet { UD.set(autoBuildQueue, forKey: "autoBuild") } }
     @Published var autoTrainTroops: Bool = false { didSet { UD.set(autoTrainTroops, forKey: "autoTrain"); if autoTrainTroops { injectAutoTrain() } } }
     @Published var autoSpyEnabled: Bool = false { didSet { UD.set(autoSpyEnabled, forKey: "autoSpy") } }
+    @Published var autoTrainCount: Int = 10 { didSet { UD.set(autoTrainCount, forKey: "autoTrainCount") } }
+    @Published var autoAttackCount: Int = 50 { didSet { UD.set(autoAttackCount, forKey: "autoAttackCount") } }
+    @Published var autoRetreatEnabled: Bool = false { didSet { UD.set(autoRetreatEnabled, forKey: "autoRetreat") } }
+    @Published var retreatX: Int = 0 { didSet { UD.set(retreatX, forKey: "retreatX") } }
+    @Published var retreatY: Int = 0 { didSet { UD.set(retreatY, forKey: "retreatY") } }
+    @Published var manualSpyX: String = "" { didSet { UD.set(manualSpyX, forKey: "manualSpyX") } }
+    @Published var manualSpyY: String = "" { didSet { UD.set(manualSpyY, forKey: "manualSpyY") } }
+    @Published var trainCounts: [String: String] = [:] { didSet { UD.set(trainCounts, forKey: "trainCounts") } }
+
+    /// المهمة اللي في الطريق: تجسس / هجوم / هروب — بتتنفذ لما صفحة a2b تفتح.
+    enum PendingAction {
+        case spy(x: Int, y: Int, name: String)
+        case attack(x: Int, y: Int, name: String)
+        case retreat
+    }
+    private var pendingAction: PendingAction?
+    private var actionStartedAt = Date.distantPast
     @Published var attackAlerts: Bool = true { didSet { UD.set(attackAlerts, forKey: "attackAlerts") } }
     @Published var resourceFullAlerts: Bool = true { didSet { UD.set(resourceFullAlerts, forKey: "resFullAlerts") } }
     @Published var buildCompleteAlerts: Bool = true { didSet { UD.set(buildCompleteAlerts, forKey: "buildAlerts") } }
@@ -42,7 +59,6 @@ class WebViewModel: NSObject, ObservableObject {
     /// كل صفحة بتتفتح تتسجل هنا أوتوماتك (بتفضل محفوظة حتى لو التطبيق اتقفل).
     @Published var pageRecords: String = "" { didSet { UD.set(pageRecords, forKey: "pageRecords") } }
     private var lastRecordedURL = ""
-    private var pendingSpyVillage: MapVillage?
 
     /// سجل كل حركة بيعملها المحرك — بيظهر في البانل وبيساعدنا نعرف مين اللي فشل وليه.
     func logActivity(_ text: String) {
@@ -68,6 +84,14 @@ class WebViewModel: NSObject, ObservableObject {
         autoCollectResources = UD.bool(forKey: "autoCollect")
         autoBuildQueue = UD.bool(forKey: "autoBuild")
         autoSpyEnabled = UD.bool(forKey: "autoSpy")
+        autoTrainCount = UD.object(forKey: "autoTrainCount") == nil ? 10 : UD.integer(forKey: "autoTrainCount")
+        autoAttackCount = UD.object(forKey: "autoAttackCount") == nil ? 50 : UD.integer(forKey: "autoAttackCount")
+        autoRetreatEnabled = UD.bool(forKey: "autoRetreat")
+        retreatX = UD.integer(forKey: "retreatX")
+        retreatY = UD.integer(forKey: "retreatY")
+        manualSpyX = UD.string(forKey: "manualSpyX") ?? ""
+        manualSpyY = UD.string(forKey: "manualSpyY") ?? ""
+        trainCounts = (UD.dictionary(forKey: "trainCounts") as? [String: String]) ?? [:]
         attackAlerts = UD.object(forKey: "attackAlerts") == nil ? true : UD.bool(forKey: "attackAlerts")
         resourceFullAlerts = UD.object(forKey: "resFullAlerts") == nil ? true : UD.bool(forKey: "resFullAlerts")
         buildCompleteAlerts = UD.object(forKey: "buildAlerts") == nil ? true : UD.bool(forKey: "buildAlerts")
@@ -160,21 +184,30 @@ class WebViewModel: NSObject, ObservableObject {
         if autoSpyEnabled {
             autoSpyNext()
         }
+        checkAlertAndRetreat()
     }
 
-    /// التجسس التلقائي: كل دورة يبعت كشافين للقرية اللي بعد الحالي (دورياً).
+    /// التجسس التلقائي: كل دورة تجسس للقرية اللي بعد الحالي (دورياً).
     private var spyCursor = 0
     private func autoSpyNext() {
-        guard pendingSpyVillage == nil, !mapVillages.isEmpty else {
-            if mapVillages.isEmpty {
-                logActivity("🤖 التجسس التلقائي: افتح الخريطة الأول عشان أجمع القرى")
-            }
+        guard pendingAction == nil else { return }
+        guard !mapVillages.isEmpty else {
+            logActivity("🤖 التجسس التلقائي: محتاج قرى بإحداثيات — من الخريطة أو اكتبها يدوي")
             return
         }
-        spyCursor = (spyCursor + 1) % mapVillages.count
-        let target = mapVillages[spyCursor]
-        logActivity("🤖 تجسس تلقائي على: \(target.name)")
-        startSpy(target)
+        // تجاهل القرى اللي مالهاش إحداثيات
+        var target: MapVillage?
+        for _ in 0..<mapVillages.count {
+            spyCursor = (spyCursor + 1) % mapVillages.count
+            let v = mapVillages[spyCursor]
+            if v.x != 0 || v.y != 0 { target = v; break }
+        }
+        guard let t = target else {
+            logActivity("🤖 مفيش قرى بإحداثيات صالحة لسه")
+            return
+        }
+        logActivity("🤖 تجسس تلقائي على: \(t.name) (\(t.x)|\(t.y))")
+        startSpy(x: t.x, y: t.y, name: t.name)
     }
 
     // MARK: - القراءة الحقيقية من اللعبة (GameEngine)
@@ -266,98 +299,128 @@ class WebViewModel: NSObject, ObservableObject {
         }
     }
 
-    /// التجسس على قرية: نفتح صفحتها ← نكمل آلياً لإرسال جواسيس بعد التحميل.
-    func startSpy(_ village: MapVillage, scoutCount: Int = 3) {
-        guard let webView = webView else { return }
-        pendingSpyVillage = village
-        logActivity("🕵️ جاري الذهاب إلى \(village.name) (\(village.x)|\(village.y))...")
-        if village.href.isEmpty {
-            pendingSpyVillage = nil
-            logActivity("❌ القرية دي مالهاش رابط — افتحها من الخريطة واضغط «جسّس من الصفحة الحالية»")
+    /// إرسال جواسيس لإحداثيات — يفتح a2b ويكمل لوحده.
+    func startSpy(x: Int, y: Int, name: String) {
+        guard x != 0 || y != 0 else {
+            logActivity("❌ محتاج إحداثيات (x|y) للتجسس")
             return
         }
-        if let url = URL(string: absoluteGameHref(village.href)) {
-            webView.load(URLRequest(url: url))
-        }
-        // لو الصفحة ما فتحتش (رابط ناقص مثلاً) نلغي المهمة بعد 8 ثواني
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
-            guard let self = self, self.pendingSpyVillage != nil else { return }
-            self.pendingSpyVillage = nil
-            self.logActivity("⏱️ صفحة القرية ما ردّت — افتح القرية يدوياً من الخريطة واضغط «جسّس من الصفحة الحالية»")
-        }
+        pendingAction = .spy(x: x, y: y, name: name)
+        actionStartedAt = Date()
+        logActivity("🕵️ تجهيز غزو الكشاف لـ \(name) (\(x)|\(y)) — فاتح نقطة التجمع...")
+        navigateToRallyPoint()
     }
 
-    /// تجسس على القرية اللي انت واقف عليها الآن (من غير ما نتنقل).
-    func spyFromCurrentPage() {
-        logActivity("🕵️ بدور على زر إرسال الجنود في الصفحة الحالية...")
-        engine.clickSendTroopsFromVillageInfo { [weak self] clicked in
-            guard let self = self else { return }
-            DispatchQueue.main.async {
-                if clicked {
-                    self.pendingSpyVillage = MapVillage(id: "manual", name: "القرية الحالية", x: 0, y: 0)
-                    self.logActivity("✅ لقيت زر الإرسال وضغطته — لو الصفحة اتغيرت هبعت الكشاف أوتوماتك")
-                } else {
-                    self.logActivity("❌ مفيش زر إرسال جنود في الصفحة دي — افتح القرية أو نقطة التجمع الأول")
-                }
-            }
-        }
+    /// هجوم بإحداثيات — يفتح a2b ويبعت العدد المحدد من أول وحدة قتالية.
+    func startAttack(x: Int, y: Int, name: String) {
+        pendingAction = .attack(x: x, y: y, name: name)
+        actionStartedAt = Date()
+        logActivity("⚔️ تجهيز هجوم على \(name) (\(x)|\(y)) بعدد \(autoAttackCount) — فاتح نقطة التجمع...")
+        navigateToRallyPoint()
     }
 
-    /// بيتم ناداه بعد ما أي صفحة تخلص تحميل — بيكمل خطوات التجسس الآلية.
+    /// الهروب: بكل الجنود لوجهة الهروب (تعزيز).
+    func startRetreat(auto: Bool) {
+        let troops = homeTroops.filter { $0.count > 0 }
+        guard !troops.isEmpty else {
+            logActivity("❌ الهروب: مفيش بيانات جنود — افتح القرية (القرى) الأول")
+            return
+        }
+        guard retreatX != 0 || retreatY != 0 else {
+            logActivity("❌ الهروب: سجّل إحداثيات واحة الهروب الأول")
+            return
+        }
+        pendingAction = .retreat
+        actionStartedAt = Date()
+        logActivity(auto ? "🏃 إنذار! بجهز الهروب بكل الجنود لـ (\(retreatX)|\(retreatY))..." : "🏃 تجهيز هروب تجريبي...")
+        navigateToRallyPoint()
+    }
+
+    private func navigateToRallyPoint() {
+        guard let url = URL(string: "https://utatar.com/a2b") else { return }
+        webView?.load(URLRequest(url: url))
+    }
+
+    /// بيتم ناداه بعد ما أي صفحة تخلص تحميل — قراءة + تنفيذ المهمة المعلقة.
     func handlePageLoaded() {
         refreshGameData()
-        advanceSpyIfNeeded()
+        advancePendingAction()
         recordCurrentPageIfNeeded()
     }
 
-    /// يسجل الصفحة الحالية لو لسه متسجلتش (بينفع مع أي تنقلة حتى من غير تحميل كامل).
-    func recordCurrentPageIfNeeded() {
-        guard let url = webView?.url?.absoluteString else { return }
-        let base = url.components(separatedBy: "?").first ?? url
-        let lastBase = lastRecordedURL.components(separatedBy: "?").first ?? lastRecordedURL
-        guard base != lastBase else { return }
-        lastRecordedURL = url
-        engine.runPageRecord { [weak self] text in
-            guard let self = self, !text.isEmpty else { return }
-            DispatchQueue.main.async {
-                let sep = self.pageRecords.isEmpty ? "" : "\n──── صفحة جديدة ──────\n"
-                var buf = self.pageRecords + sep + text
-                if buf.count > 9000 {
-                    buf = String(buf.suffix(9000))
+    /// تنفيذ المهمة المعلقة لما نكون على صفحة إرسال الجنود.
+    private func advancePendingAction() {
+        guard let action = pendingAction else { return }
+        guard pageKind == "a2b" else {
+            // مهلة 15 ثانية: لو صفحة a2b ما فتحتش نلغي
+            if Date().timeIntervalSince(actionStartedAt) > 15 {
+                pendingAction = nil
+                logActivity("⏱️ صفحة نقطة التجمع ما فتحتش — اتلغت المهمة")
+            }
+            return
+        }
+        switch action {
+        case .spy(let x, let y, let name):
+            pendingAction = nil
+            engine.sendTroops(x: x, y: y, units: [(14, 3)], mode: 3) { [weak self] ok, msg in
+                DispatchQueue.main.async {
+                    self?.logActivity(ok ? "✅ \(msg) — تجسس \(name) (\(x)|\(y)). التقرير في berichte" : "❌ التجسس فشل: \(msg)")
+                    if ok {
+                        self?.sendNotification(title: "🕵️ تجسس", body: "الكشاف في الطريق لـ \(name)")
+                    }
                 }
-                self.pageRecords = buf
+            }
+        case .attack(let x, let y, let name):
+            pendingAction = nil
+            engine.sendTroops(x: x, y: y, units: [(11, autoAttackCount)], mode: 2) { [weak self] ok, msg in
+                DispatchQueue.main.async {
+                    self?.logActivity(ok ? "⚔️ \(msg) — هجوم على \(name) (\(x)|\(y))" : "❌ الهجوم فشل: \(msg)")
+                    if ok {
+                        self?.sendNotification(title: "⚔️ هجوم", body: "القوات في الطريق لـ \(name)")
+                    }
+                }
+            }
+        case .retreat:
+            pendingAction = nil
+            let pairs = homeTroops.map { ($0.id, $0.count) }
+            engine.sendTroops(x: retreatX, y: retreatY, units: pairs, mode: 1) { [weak self] ok, msg in
+                DispatchQueue.main.async {
+                    self?.logActivity(ok ? "🏃 \(msg) — الهروب انطلق لـ (\(self?.retreatX ?? 0)|\(self?.retreatY ?? 0))" : "❌ الهروب فشل: \(msg)")
+                    if ok {
+                        self?.sendNotification(title: "🏃 هروب", body: "الجنود في الطريق لوجهة الهروب")
+                    }
+                }
             }
         }
     }
 
-    private func advanceSpyIfNeeded() {
-        guard let target = pendingSpyVillage else { return }
-        switch pageKind {
-        case "villageInfo":
-            logActivity("📖 فتحت صفحة \(target.name) — بدور على زر الإرسال...")
-            engine.clickSendTroopsFromVillageInfo { [weak self] clicked in
-                guard let self = self else { return }
-                DispatchQueue.main.async {
-                    if !clicked {
-                        self.pendingSpyVillage = nil
-                        self.logActivity("❌ مفيش زر إرسال في صفحة القرية — ابعت تشخيص من صفحة القرية")
-                    }
+    /// فحص إنذار الهجوم (بيشتغل على صفحات القرية بس) + الهروب التلقائي.
+    private func checkAlertAndRetreat() {
+        guard autoRetreatEnabled, pendingAction == nil else { return }
+        guard pageKind == "dorf1" || pageKind == "dorf2" else { return }
+        engine.readAlert { [weak self] hits in
+            guard let self = self, !hits.isEmpty else { return }
+            DispatchQueue.main.async {
+                self.logActivity("⚠️ رصدت علامة تنبيه: \(hits.joined(separator: "، "))")
+                if self.autoRetreatEnabled {
+                    self.startRetreat(auto: true)
                 }
             }
-        case "a2b":
-            engine.sendScouts(count: 3) { [weak self] ok, msg in
-                guard let self = self else { return }
-                DispatchQueue.main.async {
-                    self.pendingSpyVillage = nil
-                    self.logActivity(ok ? "✅ \(msg) — التقرير هيظهر في التقارير" : "❌ \(msg)")
-                    if ok {
-                        self.sendNotification(title: "🕵️ تجسس", body: "الجواسيس في الطريق — التقرير هيظهر في التقارير")
-                    }
-                }
-            }
-        default:
-            break
         }
+    }
+
+    /// تجسس بالإحداثيات المكتوبة يدوياً في الكارت.
+    func spyFromManualCoords() {
+        let x = Int(manualSpyX) ?? 0
+        let y = Int(manualSpyY) ?? 0
+        startSpy(x: x, y: y, name: "الهدف (\(x)|\(y))")
+    }
+
+    /// هجوم بالإحداثيات المكتوبة يدوياً.
+    func attackFromManualCoords() {
+        let x = Int(manualSpyX) ?? 0
+        let y = Int(manualSpyY) ?? 0
+        startAttack(x: x, y: y, name: "الهدف (\(x)|\(y))")
     }
 
     /// يحوّل رابط نسبي (/dorf1.php) لرابط كامل على سيرفر اللعبة.
@@ -521,48 +584,15 @@ class WebViewModel: NSObject, ObservableObject {
     }
     
     func injectAutoTrain() {
-        // لو عارفين الوحدات القابلة للتدريب من الفحص الحقيقي — درّب الأقصى مباشرة
-        if !trainableUnits.isEmpty {
-            let units = trainableUnits
-            engine.trainAllMax(units) { _ in }
-            return
-        }
-        let js = """
-        (function() {
-            try {
-                // Auto train troops if barracks is available
-                var trainBtns = document.querySelectorAll('.train_btn, [class*="train"], .recruit_btn');
-                var trainInput = document.querySelector('.train_count, [class*="train_count"], input[name*="troop"]');
-                
-                if (trainBtns.length > 0 && trainInput) {
-                    // Set train count to max available
-                    var maxBtn = document.querySelector('.max_btn, [class*="max"]');
-                    if (maxBtn) {
-                        maxBtn.click();
-                    }
-                    
-                    // Click train button
-                    setTimeout(function() {
-                        trainBtns[0].click();
-                    }, 500);
-                    
-                    return 'training_started';
-                }
-                
-                return 'no_barracks_available';
-            } catch(e) {
-                return 'error: ' + e.message;
-            }
-        })();
-        """
-        
-        webView?.evaluateJavaScript(js) { result, error in
-            if let result = result as? String, result.contains("training_started") {
-                self.sendNotification(title: "⚔️ تدريب تلقائي", body: "بدأنا تدريب جنود جداد!")
+        // تدريب أعمى بعدد محدد من كل نوع — بيشتغل على صفحة الثكنات مهما كان شكلها
+        let c = autoTrainCount
+        engine.trainBlind(count: c) { [weak self] msg in
+            DispatchQueue.main.async {
+                self?.logActivity("🤖 تدريب تلقائي: \(msg)")
             }
         }
     }
-    
+
     func checkForAttacks() {
         let js = """
         (function() {

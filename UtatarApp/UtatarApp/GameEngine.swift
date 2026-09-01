@@ -496,13 +496,28 @@ final class GameEngine: NSObject {
         if(name.length>40) name=name.substring(0,40);
         out.push({vid:dm[1], name:name, x:xy?parseInt(xy[1],10):0, y:xy?parseInt(xy[2],10):0, player:player, population:pop, href:href});
       }
-      document.querySelectorAll('area[href*="karte"], a[href*="karte"]').forEach(function(a){
-        push(a.getAttribute('href')||'', a.getAttribute('title')||(a.textContent||'').trim());
+      // 1) خلايا الخريطة من أي نوع: <area> بعنوان أو href، أي عنصر onclick فيه d=،
+      //    أي عنصر عنوانه فيه إحداثيات (x|y)
+      document.querySelectorAll('area[title], area[href*="d="]').forEach(function(a){
+        push(a.getAttribute('href')||('karte?d=area'+a.getAttribute('title')), a.getAttribute('title')||'');
       });
-      document.querySelectorAll('#map_content div[onclick*="d="]').forEach(function(d){
+      document.querySelectorAll('[onclick*="d="]').forEach(function(d){
         var oc=d.getAttribute('onclick')||'';
-        var m=oc.match(/d=\\d+/);
-        if(m) push('karte?'+m[0], d.getAttribute('title')||(d.textContent||'').trim());
+        var m=oc.match(/d=(\\d{3,})/);
+        if(!m) return;
+        push('karte?d='+m[1], d.getAttribute('title')||(d.textContent||'').trim());
+      });
+      document.querySelectorAll('[title*="("][title*="|"]').forEach(function(e){
+        var ti=e.getAttribute('title')||'';
+        if(ti.length<5 || ti.length>120) return;
+        var dm=(e.getAttribute('data-href')||e.getAttribute('href')||e.getAttribute('onclick')||'').match(/d=(\\d{3,})/);
+        var key='karte?d='+(dm?dm[1]:('t'+ti.length+'_'+ti.substring(0,12)));
+        push(key, ti);
+      });
+      // 2) لينكات كلاسيكية
+      document.querySelectorAll('a[href*="karte"], area[href*="karte"]').forEach(function(a){
+        var h=a.getAttribute('href')||'';
+        if(h.indexOf('d=')>=0) push(h, a.getAttribute('title')||(a.textContent||'').trim());
       });
       return JSON.stringify(out);
     })();
@@ -541,138 +556,156 @@ final class GameEngine: NSObject {
     })();
     """
 
-    /// على صفحة a2b.php: يملأ عدد الجواسيس (u4 روماني / u14 توتون / u23 غالي) ويرسل غارة.
-    func sendScouts(count: Int, completion: @escaping (Bool, String) -> Void) {
-        runJSON(Self.scoutSendJS(count: count)) { obj in
+    /// الإرسال الموحد بإحداثيات: تجسس (كشاف) / هجوم / هروب (كل الجنود تعزيز).
+    /// units = [(unitId, count)] — بيملأ t[id] أو tf[id] أيهم موجود في الفورم.
+    func sendTroops(x: Int, y: Int, units: [(Int, Int)], mode: Int, completion: @escaping (Bool, String) -> Void) {
+        runJSON(Self.sendTroopsJS(x: x, y: y, units: units, mode: mode)) { obj in
             let ok = (obj?["sent"] as? Bool) ?? false
             let msg = (obj?["message"] as? String) ?? ""
             completion(ok, msg)
         }
     }
 
-    static func scoutSendJS(count: Int) -> String {
-        """
-        (function(){
-          try{
-            function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
-            function unitIdFromName(n){
-              var m=String(n).match(/^t(?:f)?\\[(\\d{1,2})\\]$/i);
-              if(m) return parseInt(m[1],10);
-              var m2=String(n).match(/^t(\\d{1,2})$/i);
-              if(m2) return parseInt(m2[1],10);
-              return 0;
-            }
-            var form=null;
-            // الأول: فورم إرسال حقيقية (فيها إحداثيات x/y + مدخلات جنود)
-            document.querySelectorAll('form').forEach(function(f){
-              if(form) return;
-              if(f.querySelector('input[name="x"]') && f.querySelector('input[name="y"]') && f.querySelector('input[name^="t"]')) form=f;
-            });
-            // بعد كده: أي فورم فيها مدخلات جنود
-            if(!form){
-              document.querySelectorAll('form').forEach(function(f){
-                if(form) return;
-                if(f.querySelector('input[name^="t"]')) form=f;
-              });
-            }
-            if(!form) return JSON.stringify({sent:false,message:'افتح صفحة إرسال الجنود (نقطة التجمع) الأول'});
-            var scout=null;
-            form.querySelectorAll('input[name]').forEach(function(inp){
-              var uid=unitIdFromName(inp.getAttribute('name'));
-              if((uid===14||uid===4||uid===23) && !scout) scout=inp;
-            });
-            if(!scout) return JSON.stringify({sent:false,message:'مفيش كشاف/مستكشف في صفحة الإرسال دي'});
-            var proto=HTMLInputElement.prototype;
-            var setter=Object.getOwnPropertyDescriptor(proto,'value').set;
-            var maxv=0;
-            var mx=document.querySelector('a[href*="'+scout.getAttribute('name')+'.value="]');
-            if(mx) maxv=pi(mx.textContent);
-            var n=Math.min(\(count), maxv>0?maxv:\(count));
-            try{ setter.call(scout,String(n)); }catch(e){ scout.value=String(n); }
-            scout.dispatchEvent(new Event('input',{bubbles:true}));
-            scout.dispatchEvent(new Event('change',{bubbles:true}));
-            var raid=form.querySelector('input[name="c"][value="4"], input[value="4"]');
-            if(raid) raid.click();
-            var btn=form.querySelector('button[type="submit"], button[name="s"], input[type="submit"], input[type="image"], button:not([type])');
-            if(btn){ btn.click(); }
-            else if(form.requestSubmit){ form.requestSubmit(); }
-            else { return JSON.stringify({sent:false,message:'لا يوجد زر إرسال'}); }
-            return JSON.stringify({sent:true,message:'انطلق \(count) من الجواسيس 🕵️'});
-          }catch(e){ return JSON.stringify({sent:false,message:e.message}); }
-        })();
-        """
-    }
-
-    // MARK: - الهجوم بإحداثيات (يستخدم a2b الحقيقي)
-
-    func sendAttack(x: Int, y: Int, troops: [(String, Int)], raid: Bool, completion: @escaping (Bool, String) -> Void) {
-        runJSON(Self.attackJS(x: x, y: y, troops: troops, raid: raid)) { obj in
-            let ok = (obj?["sent"] as? Bool) ?? false
-            let msg = (obj?["message"] as? String) ?? ""
-            completion(ok, msg)
-        }
-    }
-
-    static func attackJS(x: Int, y: Int, troops: [(String, Int)], raid: Bool) -> String {
+    static func sendTroopsJS(x: Int, y: Int, units: [(Int, Int)], mode: Int) -> String {
         var arr = "["
-        for (i, t) in troops.enumerated() {
-            let name = t.0.replacingOccurrences(of: "'", with: "")
-            arr += "['\(name)',\(t.1)]"
-            if i < troops.count - 1 { arr += "," }
+        for (i, u) in units.enumerated() {
+            arr += "[\(u.0),\(u.1)]"
+            if i < units.count - 1 { arr += "," }
         }
         arr += "]"
+        // قيم الراديو البديلة: نهب 3 (وبدائل 4/2) — هجوم 2 — تعزيز 1
+        var modeVals: [Int]
+        switch mode {
+        case 3: modeVals = [3, 4, 2]
+        case 2: modeVals = [2, 3]
+        default: modeVals = [1, 2]
+        }
+        let mv = "[" + modeVals.map(String.init).joined(separator: ",") + "]"
         return """
         (function(){
           try{
+            function pi(x){ var n=parseInt(String(x).replace(/[^0-9]/g,''),10); return isNaN(n)?0:n; }
             var form=null;
+            // فورم الإرسال = فيها إحداثيات x و y
             document.querySelectorAll('form').forEach(function(f){
-              if(form) return;
-              var hx=f.querySelector('input[name="x"]');
-              var hy=f.querySelector('input[name="y"]');
-              var ht=f.querySelector('input[name^="t"]');
-              if(hx&&hy&&ht) form=f;
+              if(!form && f.querySelector('input[name="x"]') && f.querySelector('input[name="y"]')) form=f;
             });
             if(!form){
               document.querySelectorAll('form').forEach(function(f){
-                if(form) return;
-                if(f.querySelector('input[name^="t"]')) form=f;
+                if(!form && f.querySelector('input[name^="t"]')) form=f;
               });
             }
-            if(!form) return JSON.stringify({sent:false,message:'افتح نقطة التجمع (القرية ← نقطة التجمع) الأول'});
-            var sels=\(arr);
-            var filled=0;
-            sels.forEach(function(s){
-              var inp=form.querySelector('input[name="'+s[0]+'"]');
-              if(!inp) return;
+            if(!form) return JSON.stringify({sent:false,message:'افتح نقطة التجمع (a2b) الأول'});
+            function setVal(inp,v){
               var proto=HTMLInputElement.prototype;
               var setter=Object.getOwnPropertyDescriptor(proto,'value').set;
-              try{ setter.call(inp,String(s[1])); }catch(e){ inp.value=String(s[1]); }
+              try{ setter.call(inp,String(v)); }catch(e){ inp.value=String(v); }
               inp.dispatchEvent(new Event('input',{bubbles:true}));
               inp.dispatchEvent(new Event('change',{bubbles:true}));
-              filled++;
-            });
-            if(filled===0) return JSON.stringify({sent:false,message:'مفيش جنود متاحين'});
+            }
             var xi=form.querySelector('input[name="x"]');
             var yi=form.querySelector('input[name="y"]');
-            if(xi&&yi){
-              var proto=HTMLInputElement.prototype;
-              var setter=Object.getOwnPropertyDescriptor(proto,'value').set;
-              try{ setter.call(xi,String(\(x))); }catch(e){ xi.value=String(\(x)); }
-              try{ setter.call(yi,String(\(y))); }catch(e){ yi.value=String(\(y)); }
-              xi.dispatchEvent(new Event('change',{bubbles:true}));
-              yi.dispatchEvent(new Event('change',{bubbles:true}));
+            if(xi&&yi){ setVal(xi,\(x)); setVal(yi,\(y)); }
+            var pairs=\(arr);
+            var filled=0, filledNames=[];
+            pairs.forEach(function(p){
+              if(p[1]<=0) return;
+              var cands=['t'+p[0], 'tf['+p[0]+']', 't['+p[0]+']'];
+              for(var i=0;i<cands.length;i++){
+                var inp=form.querySelector('input[name="'+cands[i]+'"]');
+                if(inp){ setVal(inp,p[1]); filled++; filledNames.push(cands[i]+'='+p[1]); break; }
+              }
+            });
+            if(filled===0) return JSON.stringify({sent:false,message:'مفيش مدخلات للجنود المطلوبين في الفورم'});
+            // اختيار نوع الهجوم: بنمشي على الأولويات بالترتيب (نهب قبل هجوم مثلاً)
+            var modeVals=\(mv);
+            var modeRadio=null;
+            for(var mi=0; mi<modeVals.length && !modeRadio; mi++){
+              form.querySelectorAll('input[name="c"]').forEach(function(r){
+                if(modeRadio) return;
+                if(parseInt(r.value,10)===modeVals[mi]) modeRadio=r;
+              });
             }
-            var mode=form.querySelector(raid?'input[name="c"][value="4"]':'input[name="c"][value="3"]');
-            if(mode) mode.click();
-            var btn=form.querySelector('button[name="s"], button[type="submit"], input[type="image"][name="s1"], input[type="submit"], button:not([type])');
+            if(modeRadio) modeRadio.click();
+            var btn=form.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
             if(btn){ btn.click(); }
             else if(form.requestSubmit){ form.requestSubmit(); }
             else { return JSON.stringify({sent:false,message:'لا يوجد زر إرسال'}); }
-            return JSON.stringify({sent:true,message:'الهجوم انطلق ⚔️'});
+            return JSON.stringify({sent:true,message:'انطلقت القوات ('+filledNames.join(', ')+')'});
           }catch(e){ return JSON.stringify({sent:false,message:e.message}); }
         })();
         """
     }
+
+    /// التدريب الأعمى بعدد محدد: بيدور على أي فورم تدريب (t[11].. / tf[..]) في أي صفحة
+    /// وبيملأ كل نوع بالعدد (مع احترام الحد الأقصى لو معروض) ويدرس.
+    func trainBlind(count: Int, completion: @escaping (String) -> Void) {
+        runJSON(Self.trainBlindJS(count: count)) { obj in
+            let ok = (obj?["ok"] as? Bool) ?? false
+            completion((obj?["message"] as? String) ?? (ok ? "تم" : "فشل"))
+        }
+    }
+
+    static func trainBlindJS(count: Int) -> String {
+        return """
+        (function(){
+          try{
+            function isSendForm(f){ return f.querySelector('input[name="x"]') && f.querySelector('input[name="y"]'); }
+            var form=null;
+            document.querySelectorAll('form').forEach(function(f){
+              if(form || isSendForm(f)) return;
+              var has=false;
+              f.querySelectorAll('input[name]').forEach(function(i){
+                if(!has && /^t(f)?\\[\\d+\\]$/.test(i.getAttribute('name')||'')) has=true;
+              });
+              if(has) form=f;
+            });
+            if(!form) return JSON.stringify({ok:false,message:'مفيش فورم تدريب في الصفحة دي'});
+            function setVal(inp,v){
+              var proto=HTMLInputElement.prototype;
+              var setter=Object.getOwnPropertyDescriptor(proto,'value').set;
+              try{ setter.call(inp,String(v)); }catch(e){ inp.value=String(v); }
+              inp.dispatchEvent(new Event('input',{bubbles:true}));
+              inp.dispatchEvent(new Event('change',{bubbles:true}));
+            }
+            var filled=0, names=[];
+            form.querySelectorAll('input[name]').forEach(function(inp){
+              var nm=inp.getAttribute('name')||'';
+              if(!/^t(f)?\\[\\d+\\]$/.test(nm)) return;
+              var max=parseInt(inp.getAttribute('max'),10);
+              var v=\(count);
+              if(!isNaN(max)&&max>0&&v>max) v=max;
+              setVal(inp,v);
+              filled++; names.push(nm+'='+v);
+            });
+            if(filled===0) return JSON.stringify({ok:false,message:'مفيش حقول تدريب'});
+            var btn=form.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
+            if(btn){ btn.click(); }
+            else if(form.requestSubmit){ form.requestSubmit(); }
+            else { return JSON.stringify({ok:false,message:'لا يوجد زر تدريب'}); }
+            return JSON.stringify({ok:true,message:'بدأ التدريب ('+names.join(', ')+')'});
+          }catch(e){ return JSON.stringify({ok:false,message:e.message}); }
+        })();
+        """
+    }
+
+    /// كاشف إنذار الهجوم: بيدور على أيقونات/عناصر التحذير الشائعة.
+    func readAlert(completion: @escaping ([String]) -> Void) {
+        runJSON(Self.alertJS) { obj in
+            completion(obj?["hits"] as? [String] ?? [])
+        }
+    }
+
+    static let alertJS = """
+    (function(){
+      var hits=[];
+      var sels=['img[src*="alert"]','img[src*="warn"]','img[src*="attack"]','img[src*="alarm"]','[id*="alarm"]','[class*="alarm"]','[class*="incoming"]','[class*="attack_warn"]'];
+      sels.forEach(function(s){
+        try{ var n=document.querySelectorAll(s).length; if(n>0) hits.push(s+' x'+n); }catch(e){}
+      });
+      return JSON.stringify({hits:hits});
+    })();
+    """
 
     // MARK: - قراءة تقارير التجسس (الموارد والجنود والجدار)
 
@@ -885,6 +918,21 @@ final class GameEngine: NSObject {
         if(!/karte|map|a2b|build|berichte|spy|send|dorf|attack/.test(h)||seen[h]) return;
         seen[h]=1; out.push('A '+h.substring(0,70)); l++;
       });
+      if(/karte|map/.test(location.href)){
+        document.querySelectorAll('area').forEach(function(a,i){
+          if(i>=6) return;
+          out.push('AREA href='+(a.getAttribute('href')||'').substring(0,55)+' title="'+(a.getAttribute('title')||'').substring(0,40)+'"');
+        });
+        var oc=0;
+        document.querySelectorAll('[onclick]').forEach(function(d){
+          if(oc>=8) return;
+          oc++;
+          out.push('OC '+d.tagName+' '+(d.getAttribute('onclick')||'').substring(0,65)+' t="'+(d.getAttribute('title')||'').substring(0,25)+'"');
+        });
+      }
+      ['img[src*="alert"]','img[src*="warn"]','[id*="alarm"]','[class*="alarm"]'].forEach(function(sel){
+        try{ var n=document.querySelectorAll(sel).length; if(n>0) out.push('ALERT? '+sel+' x'+n); }catch(e){}
+      });
       return JSON.stringify({lines:out});
     })();
     """
@@ -915,12 +963,12 @@ final class GameEngine: NSObject {
         case 12: return "مقاتل برمح"
         case 13: return "مقاتل بفأس"
         case 14: return "الكشاف"
-        case 15: return "القيصر"
-        case 16: return "فرسان التوتون"
-        case 17: return "الكبش التوتوني"
+        case 15: return "مقاتل القيصر"
+        case 16: return "فرسان الجرمان"
+        case 17: return "محطمة الابواب"
         case 18: return "المقلاع"
-        case 19: return "الرئيس"
-        case 20: return "المستوطن التوتوني"
+        case 19: return "الزعيم"
+        case 20: return "مستوطن"
         case 21: return "الفرالكس"
         case 22: return "المبارز"
         case 23: return "المستكشف"
