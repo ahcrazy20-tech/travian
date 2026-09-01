@@ -69,6 +69,12 @@ class WebViewModel: NSObject, ObservableObject {
     private var lastExploreAt = Date.distantPast
     private var karteFruitless = 0
     private var lastRecordedAt = Date.distantPast
+    /// نافذة هدوء بعد أي إرسال: بنمنع أي تنقل من البوت 8 ثواني عشان ما نلغيش الـ POST وهو طاير
+    private var submitQuietUntil = Date.distantPast
+
+    private func markSubmitBusy() {
+        submitQuietUntil = Date().addingTimeInterval(8)
+    }
     private var lastRecordedURL = ""
 
     /// سجل كل حركة بيعملها المحرك — بيظهر في البانل وبيساعدنا نعرف مين اللي فشل وليه.
@@ -206,6 +212,8 @@ class WebViewModel: NSObject, ObservableObject {
         collectGameState()
         refreshGameData()
         advancePendingAction()
+        // لو في إرسال لسه طاير — بنستنى ونسيب باقي الأ-shغل للدورة الجاية
+        guard Date() >= submitQuietUntil else { return }
         // Run enabled automations
         if autoCollectResources {
             injectAutoCollect()
@@ -238,7 +246,7 @@ class WebViewModel: NSObject, ObservableObject {
     /// 2) مفيش؟ يزور خلية خريطة جديدة (dorf3?id=) كل 25 ثانية ويتعرف عليها.
     /// 3) خلصت الخلايا؟ يجيب منطقة جديدة من الخريطة (مرتين كحد أقصى).
     private func exploreAndSpy() {
-        guard pendingAction == nil else { return }
+        guard pendingAction == nil, Date() >= submitQuietUntil else { return }
         // 1) قرى معروفة الإحداثيات واللاعب
         for _ in 0..<mapVillages.count {
             spyCursor = (spyCursor + 1) % mapVillages.count
@@ -409,7 +417,9 @@ class WebViewModel: NSObject, ObservableObject {
 
     private func navigateToRallyPoint() {
         guard let url = URL(string: "https://utatar.com/a2b") else { return }
+        lastBotNavAt = Date()
         webView?.load(URLRequest(url: url))
+        markSubmitBusy()
     }
 
     /// بيتم ناداه بعد ما أي صفحة تخلص تحميل — قراءة + تنفيذ المهمة المعلقة.
@@ -737,6 +747,7 @@ class WebViewModel: NSObject, ObservableObject {
                     }
                     self.barracksHintShown = false
                     self.trainCooldownUntil = Date().addingTimeInterval(15 * 60)
+                    self.markSubmitBusy()
                     self.logActivity("🐴 تدريب تلقائي: \(msg) — التدريب الجاي بعد ربع ساعة")
                     // التحقق بعد ثانيتين: لو الفورم لسه مكانها يبقى اللعبة رفضت — نسجل ردها
                     DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
@@ -769,7 +780,7 @@ class WebViewModel: NSObject, ObservableObject {
 
     /// رايح للثكنة: الأول بنجرب الكاش، وبعدين ندور على لينك "ثكنة" في الصفحة، ولو مش لاقيين نمشي لـ dorf2.
     private func gotoBarracks(failReason: String) {
-        guard pendingAction == nil else { return }
+        guard pendingAction == nil, Date() >= submitQuietUntil else { return }
         let cur = webView?.url.map { Self.trainablePath(from: $0) } ?? ""
 
         if !barracksPath.isEmpty {
@@ -808,6 +819,10 @@ class WebViewModel: NSObject, ObservableObject {
     private var lastBotNavAt = Date.distantPast
 
     func navigate(path: String) {
+        guard Date() >= submitQuietUntil else {
+            logActivity("⏳ مستني تأكيد الإرسال — مش بنقل دلويتي")
+            return
+        }
         let clean = path.hasPrefix("/") ? String(path.dropFirst()) : path
         guard let url = URL(string: "https://utatar.com/" + clean) else { return }
         lastBotNavAt = Date()

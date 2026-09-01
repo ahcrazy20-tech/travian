@@ -651,11 +651,46 @@ final class GameEngine: NSObject {
             }
             var viaLabel = !!(modeRadio && labelRx.test(labelText(modeRadio)));
             if(modeRadio){ modeRadio.click(); }
+            // ===== التوأمة: محرك EBDA الأصلي بيقرا t1..t10 (موضعي: u14=t4)،
+            // والنسخ المعدلة بتقرا t14 أو t[14] أو tf[14]. بنبعت كل الأشكال مع بعض —
+            // الخادم بياخد اللي بيفهمه ويتجاهل الباقي، ومفيش أي ضرر من الحقول الزيادة.
+            function twinNames(nm){
+              var m=nm.match(/^tf?\\[?(\\d{1,2})\\]?$/);
+              if(!m) return [];
+              var n=parseInt(m[1],10);
+              var keep={}; keep[nm]=1;
+              var out={};
+              out['t'+n]=1;                        // 14
+              var pos=(n-1)%10+1; out['t'+pos]=1;  // موضعي: 14 -> t4
+              out['t['+n+']']=1;                   // t[14]
+              out['tf['+n+']']=1;                  // tf[14]
+              for(var k in keep) delete out[k];
+              return Object.keys(out);
+            }
+            var added=[];
+            form.querySelectorAll('input[name]').forEach(function(inp){
+              var nm=inp.getAttribute('name')||'';
+              var v=parseInt(inp.value,10);
+              if(!v || v<=0) return;
+              twinNames(nm).forEach(function(tn){
+                if(!form.querySelector('input[name="'+tn+'"]')){
+                  var h=document.createElement('input');
+                  h.setAttribute('type','hidden'); h.setAttribute('name',tn); h.setAttribute('value',String(v));
+                  form.appendChild(h); added.push(tn+'='+v);
+                }
+              });
+            });
+            // s1=ok المخفي (المحرك الأصلي بيفحصه أحيانًا)
+            if(!form.querySelector('input[name="s1"]')){
+              var s1=document.createElement('input');
+              s1.setAttribute('type','hidden'); s1.setAttribute('name','s1'); s1.setAttribute('value','ok');
+              form.appendChild(s1);
+            }
             var btn=form.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
             if(btn){ btn.click(); }
             else if(form.requestSubmit){ form.requestSubmit(); }
             else { return JSON.stringify({sent:false,message:'لا يوجد زر إرسال'}); }
-            return JSON.stringify({sent:true,message:'انطلقت القوات ('+filledNames.join(', ')+')'+(viaLabel?' [بالنص]':' [بالقيمة]')});
+            return JSON.stringify({sent:true,message:'انطلقت القوات ('+filledNames.join(', ')+')'+(added.length?' +توائم('+added.slice(0,4).join(',')+')':'')+(viaLabel?' [بالنص]':' [بالقيمة]')});
           }catch(e){ return JSON.stringify({sent:false,message:e.message}); }
         })();
         """
@@ -736,6 +771,38 @@ final class GameEngine: NSObject {
               filled++; names.push(nm+'='+v);
             });
             if(filled===0) return JSON.stringify({ok:false,message:'مفيش حقول تدريب'});
+            // ===== التوأمة للتدريب: المعالج الأصلي (Technology.php procTrain) بيقرا
+            // t11..t20 من غير أقواس وبيشترط ft=t1 + id. بنضمن الحقول دي كلها موجودة.
+            form.querySelectorAll('input[name]').forEach(function(inp){
+              var nm=inp.getAttribute('name')||'';
+              var v=parseInt(inp.value,10);
+              if(!v || v<=0) return;
+              var m=nm.match(/^t(f)?\\[(\\d{1,2})\\]$/);
+              if(m){
+                var plain='t'+m[2];
+                if(!form.querySelector('input[name="'+plain+'"]')){
+                  var h=document.createElement('input');
+                  h.setAttribute('type','hidden'); h.setAttribute('name',plain); h.setAttribute('value',String(v));
+                  form.appendChild(h); names.push(plain+'='+v);
+                }
+              }
+            });
+            if(!form.querySelector('input[name="ft"]')){
+              var ft=document.createElement('input');
+              ft.setAttribute('type','hidden'); ft.setAttribute('name','ft'); ft.setAttribute('value','t1');
+              form.appendChild(ft);
+            }
+            if(!form.querySelector('input[name="id"]')){
+              var idm=(location.pathname+location.search).match(/id=(\\d+)/);
+              var idh=document.createElement('input');
+              idh.setAttribute('type','hidden'); idh.setAttribute('name','id'); idh.setAttribute('value',idm?idm[1]:'34');
+              form.appendChild(idh);
+            }
+            if(!form.querySelector('input[name="s1"]')){
+              var s1=document.createElement('input');
+              s1.setAttribute('type','hidden'); s1.setAttribute('name','s1'); s1.setAttribute('value','ok');
+              form.appendChild(s1);
+            }
             var btn=form.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
             if(btn){ btn.click(); }
             else if(form.requestSubmit){ form.requestSubmit(); }

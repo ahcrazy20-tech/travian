@@ -65,6 +65,7 @@ class Element {
     return out;
   }
   contains(other) { let e = other; while (e) { if (e === this) return true; e = e.parentElement; } return false; }
+  appendChild(c) { this.children.push(c); c.parentElement = this; H.register(c); return c; }
   closest(selList) {
     let e = this.parentElement;
     while (e) {
@@ -118,11 +119,12 @@ const H = {
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
   querySelectorAll(sel) { return this.els.filter(el => matches(el, sel)); },
 };
-const window = { location: { href: 'https://utatar.com/build?id=34' } };
+const window = { location: { href: 'https://utatar.com/build?id=34', pathname: '/build', search: '?id=34' } };
 const location = window.location;
 const document = {
   title: 'عصر التتار5',
   body: null,
+  createElement: tag => t(tag, {}),   // created elements auto-register globally (H)
   querySelector: s => H.querySelector(s),
   querySelectorAll: s => {
     const sels = s.split(',').map(x => x.trim());
@@ -274,6 +276,14 @@ if (!raidClicked || raidClicked.getAttribute('value') !== '4') {
   throw new Error('FAIL raid radio value 4 (نهب) not clicked');
 }
 if (!sendForm.children.find(c => c.clicked)) throw new Error('FAIL send button not clicked');
+// twin fields: plain t14 + positional t4 must exist with the scout value
+const twin14 = sendForm.children.find(c => c.getAttribute && c.getAttribute('name') === 't14' && c.value === '3');
+const twin4 = sendForm.children.find(c => c.getAttribute && c.getAttribute('name') === 't4' && c.value === '3');
+const s1 = sendForm.children.find(c => c.getAttribute && c.getAttribute('name') === 's1');
+if (!twin14) throw new Error('FAIL twin t14 missing');
+if (!twin4) throw new Error('FAIL positional twin t4 missing');
+if (!s1 || s1.value !== 'ok') throw new Error('FAIL s1=ok hidden missing');
+console.log('TWINS: t14=3 + t4=3 + s1=ok ✓');
 
 // ==== findBarracksLinkJS: finds the barracks link by Arabic name on a dorf2-like page ====
 const bImg = t('img', { src: 'img/34.gif', title: 'الثكنة مستوى 10' });
@@ -293,6 +303,13 @@ console.log('BLIND:', JSON.stringify(blindRes));
 if (!blindRes.ok) throw new Error('FAIL trainBlind: ' + blindRes.message);
 if (inp11.value !== '500') throw new Error('FAIL blind tf[11]=500, got ' + inp11.value);
 if (inp14.value !== '87') throw new Error('FAIL blind tf[14] capped to 87, got ' + inp14.value);
+const tPlain11 = trainForm.children.find(c => c.getAttribute && c.getAttribute('name') === 't11' && c.value === '500');
+const ft = trainForm.children.find(c => c.getAttribute && c.getAttribute('name') === 'ft');
+const idh = trainForm.children.find(c => c.getAttribute && c.getAttribute('name') === 'id');
+if (!tPlain11) throw new Error('FAIL train twin t11 missing');
+if (!ft || ft.value !== 't1') throw new Error('FAIL ft=t1 missing');
+if (!idh) throw new Error('FAIL id hidden missing');
+console.log('TRAIN TWINS: t11=500 + ft=t1 + id ✓');
 
 // ==== readVillageInfoJS: parses player/coords from a dorf3-style info page ====
 const vbody = t('body', {}, [
