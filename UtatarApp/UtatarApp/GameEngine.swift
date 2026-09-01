@@ -434,7 +434,7 @@ final class GameEngine: NSObject {
               var caps={};
               var reA=/name="tf?\\[?(\\d{1,2})\\]?"[^>]{0,240}?max="(\\d+)"/g, mm;
               while((mm=reA.exec(html))){ var u1=parseInt(mm[1],10); var v1=parseInt(mm[2].replace(/,/g,''),10); if(v1>0) caps[u1]=v1; }
-              var reB=/\\[\s*["']tf?\\[?(\\d{1,2})\\]?["']\\s*\\]\\.value\\s*=\\s*["']?([0-9][0-9,]*)/g;
+              var reB=/\\[\\s*["']tf?\\[?(\\d{1,2})\\]?["']\\s*\\]\\.value\\s*=\\s*["']?([0-9][0-9,]*)/g;
               while((mm=reB.exec(html))){ var u2=parseInt(mm[1],10); var v2=parseInt(mm[2].replace(/,/g,''),10); if(v2>0) caps[u2]=v2; }
               var reC=/\\.snd\\.tf?(\\d{1,2})\\.value\\s*=\\s*["']?([0-9][0-9,]*)/g;
               while((mm=reC.exec(html))){ var u3=parseInt(mm[1],10); var v3=parseInt(mm[2].replace(/,/g,''),10); if(v3>0) caps[u3]=v3; }
