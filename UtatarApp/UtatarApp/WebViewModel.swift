@@ -768,6 +768,40 @@ class WebViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// 🔬 تجربة تشخيص: تدريب واحد من كل نوع فورًا (من غير مهلة) — عشان نعرف في ثانية هل الخادم بيقبل ولا لأ وبينطي إيه.
+    func testTrainOnce() {
+        guard pendingAction == nil else {
+            logActivity("🔬 فيه مهمة شغالة — نجرب بعد ما تخلص")
+            return
+        }
+        logActivity("🔬 تجربة تدريب واحدة من كل نوع...")
+        engine.trainBlind(count: 1) { [weak self] ok, msg in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if ok {
+                    if let url = self.webView?.url { self.barracksPath = Self.trainablePath(from: url) }
+                    self.markSubmitBusy()
+                    self.logActivity("🔬 \(msg) — افتح الثكنة بعد 5 ثواني وشوف طابور التدريب")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+                        guard let self = self else { return }
+                        self.engine.trainCheck { state in
+                            DispatchQueue.main.async {
+                                if state.hasPrefix("still") {
+                                    let reply = String(state.dropFirst(5))
+                                    self.logActivity("⚠️ اللعبة ما قبلتش — ردها:\(reply.isEmpty ? " (مفيش رسالة)" : reply)")
+                                } else if state == "gone" {
+                                    self.logActivity("✅ الصفحة اتنقلت = التدريب اتقبل على الأغلب — اتأكد من طابور الثكنة")
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    self.gotoBarracks(failReason: msg)
+                }
+            }
+        }
+    }
+
     /// من URL كامل: المسار مع علامة الاستفهام (من غير vid2 عشان يشتغل مع أي قريتنا الحالية)
     private static func trainablePath(from url: URL) -> String {
         var path = url.path

@@ -373,6 +373,18 @@ struct TrainingCard: View {
                             .cornerRadius(6)
                     }
                 }
+                Button(action: { viewModel.testTrainOnce() }) {
+                    Text("🔬 تجربة تشخيص: درّب 1 من كل نوع")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.blue.opacity(0.8))
+                        .cornerRadius(6)
+                }
+                Text("الزرار ده للتشخيص بس: بيملأ 1 من كل نوع ويدرس، وبعدها بيقولك في السجل هل اللعبة قبلت ولا رفضت وبنص ردها")
+                    .font(.caption2)
+                    .foregroundColor(.gray.opacity(0.8))
             }
         }
         .padding()

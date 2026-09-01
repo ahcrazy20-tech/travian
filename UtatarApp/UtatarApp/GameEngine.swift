@@ -1145,6 +1145,14 @@ final class GameEngine: NSObject {
           out.push('OC '+d.tagName+' '+(d.getAttribute('onclick')||'').substring(0,65)+' t="'+(d.getAttribute('title')||'').substring(0,25)+'"');
         });
       }
+      // رسايل اللعبة الظاهرة (رفض تدريب/أخطاء/تنبيهات) — دليل مباشر على سبب الرفض
+      var msg=0;
+      document.querySelectorAll('[class*="error"],[class*="err "],[class*="alert"],[class*="notif"],[class*="message"],[id*="error"]').forEach(function(e){
+        if(msg>=4) return;
+        var t2=(e.textContent||'').trim();
+        var vis = e.offsetWidth!==undefined ? (e.offsetWidth>0 && e.offsetHeight>0) : true;
+        if(t2.length>2 && t2.length<160 && vis){ out.push('MSG: '+t2.replace(/\\s+/g,' ')); msg++; }
+      });
       ['img[src*="alert"]','img[src*="warn"]','[id*="alarm"]','[class*="alarm"]'].forEach(function(sel){
         try{ var n=document.querySelectorAll(sel).length; if(n>0) out.push('ALERT? '+sel+' x'+n); }catch(e){}
       });
