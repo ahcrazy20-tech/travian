@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import WebKit
 import Combine
 import UserNotifications
@@ -58,6 +59,8 @@ class WebViewModel: NSObject, ObservableObject {
     @Published var activityLog: [String] = []
     /// كل صفحة بتتفتح تتسجل هنا أوتوماتك (بتفضل محفوظة حتى لو التطبيق اتقفل).
     @Published var pageRecords: String = "" { didSet { UD.set(pageRecords, forKey: "pageRecords") } }
+    /// عنوان آخر صفحة تدريب نجحت — عشان التدريب الأوتوماتيك يروحلها لوحده
+    @Published var barracksPath: String = "" { didSet { UD.set(barracksPath, forKey: "barracksPath") } }
     private var lastRecordedURL = ""
 
     /// سجل كل حركة بيعملها المحرك — بيظهر في البانل وبيساعدنا نعرف مين اللي فشل وليه.
@@ -103,7 +106,13 @@ class WebViewModel: NSObject, ObservableObject {
             logActivity("♻️ رجعنا — الأوتوماتك شغّال تاني من حيث وقف")
         }
         pageRecords = UD.string(forKey: "pageRecords") ?? ""
+        barracksPath = UD.string(forKey: "barracksPath") ?? ""
         setupTimer()
+        setupLifecycleWatchers()
+        if isAutomationEnabled {
+            UIApplication.shared.isIdleTimerDisabled = true
+            KeepAlive.shared.start()
+        }
     }
     
     func setupWebView(_ webView: WKWebView) {
@@ -134,6 +143,7 @@ class WebViewModel: NSObject, ObservableObject {
     func toggleAutomation() {
         isAutomationEnabled.toggle()
         UD.set(isAutomationEnabled, forKey: "automationOn")
+        UIApplication.shared.isIdleTimerDisabled = isAutomationEnabled
         if isAutomationEnabled {
             startAutomation()
             KeepAlive.shared.start()
@@ -145,6 +155,29 @@ class WebViewModel: NSObject, ObservableObject {
         }
     }
     
+    /// مراقبة حياة التطبيق: منع قفل الشاشة + إعادة تشغيل البوت أول ما يرجع
+    private func setupLifecycleWatchers() {
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            guard let self = self, self.isAutomationEnabled else { return }
+            KeepAlive.shared.start()
+            UIApplication.shared.isIdleTimerDisabled = true
+            self.runAutomationCycle()
+            self.logActivity("♻️ رجع التطبيق للقدام — الأوتوماتك شغال")
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            guard let self = self, self.isAutomationEnabled else { return }
+            KeepAlive.shared.start()   // نتأكد إن الصوت الصامت شغال قبل ما نتحجب
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.willTerminateNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            guard let self = self else { return }
+            UD.set(true, forKey: "automationOn")   // نفتكر إن الأوتوماتك كان شغال
+            _ = self.isAutomationEnabled
+        }
+    }
+
     private func setupTimer() {
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             guard let self = self, self.isAutomationEnabled else { return }
@@ -189,24 +222,41 @@ class WebViewModel: NSObject, ObservableObject {
 
     /// التجسس التلقائي: كل دورة تجسس للقرية اللي بعد الحالي (دورياً).
     private var spyCursor = 0
+    /// القرى اللي اتجسّت في الجلسة دي — عشان منرجعش لنفس القرية تاني على طول.
+    private var spyDone = Set<String>()
     private func autoSpyNext() {
         guard pendingAction == nil else { return }
         guard !mapVillages.isEmpty else {
             logActivity("🤖 التجسس التلقائي: محتاج قرى بإحداثيات — من الخريطة أو اكتبها يدوي")
             return
         }
-        // تجاهل القرى اللي مالهاش إحداثيات
+        // تجاهل: القرى من غير إحداثيات + الواحات + القرى اللي مفيهاش لاعب (المجهولة/الفاضية)
         var target: MapVillage?
+        var skipped = 0
         for _ in 0..<mapVillages.count {
             spyCursor = (spyCursor + 1) % mapVillages.count
             let v = mapVillages[spyCursor]
-            if v.x != 0 || v.y != 0 { target = v; break }
+            guard v.x != 0 || v.y != 0 else { skipped += 1; continue }
+            guard !spyDone.contains(v.id) else { skipped += 1; continue }
+            let nm = v.name
+            if nm.contains("واحة") || nm.contains("مجهول") || nm.contains("خالية") { skipped += 1; continue }
+            let pl = v.player.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !pl.isEmpty, pl != "-", pl != "?" else { skipped += 1; continue }
+            target = v
+            break
         }
         guard let t = target else {
-            logActivity("🤖 مفيش قرى بإحداثيات صالحة لسه")
+            // كل القرى اتجسّت؟ نفضل داورين من أول وجديد لما تتجدد الخريطة
+            if spyDone.count >= mapVillages.count, !spyDone.isEmpty {
+                spyDone.removeAll()
+                logActivity("🤖 خلصنا دورة تجسس كاملة — هنبدأ دورة جديدة")
+            } else {
+                logActivity("🤖 مفيش قرى صالحة للتجسس (تجاهلنا \(skipped) واحة/قرية فاضية/مكررة)")
+            }
             return
         }
-        logActivity("🤖 تجسس تلقائي على: \(t.name) (\(t.x)|\(t.y))")
+        spyDone.insert(t.id)
+        logActivity("🤖 تجسس تلقائي على: \(t.name) (\(t.x)|\(t.y)) لاعب: \(t.player)")
         startSpy(x: t.x, y: t.y, name: t.name)
     }
 
@@ -346,6 +396,11 @@ class WebViewModel: NSObject, ObservableObject {
         refreshGameData()
         advancePendingAction()
         recordCurrentPageIfNeeded()
+        // البوت وصل لصفحة مبنية بعد تنقل هو نفسه عمله؟ نجرّب التدريب فورًا من غير ما نستنى الدورة
+        if isAutomationEnabled, autoTrainTroops, pendingAction == nil, pageKind == "build",
+           Date().timeIntervalSince(lastBotNavAt) < 20 {
+            injectAutoTrain()
+        }
     }
 
     /// مسجل الصفحات الأوتوماتيكي: يسجل كل صفحة جديدة (بدون تكرار) عشان نحلل الـ DOM الحقيقي.
@@ -604,13 +659,76 @@ class WebViewModel: NSObject, ObservableObject {
     }
     
     func injectAutoTrain() {
-        // تدريب أعمى بعدد محدد من كل نوع — بيشتغل على صفحة الثكنات مهما كان شكلها
+        // لو في مهمة إرسال شغالة ما نعرفش نقطعها
+        guard pendingAction == nil else { return }
         let c = autoTrainCount
-        engine.trainBlind(count: c) { [weak self] msg in
+        engine.trainBlind(count: c) { [weak self] ok, msg in
             DispatchQueue.main.async {
-                self?.logActivity("🤖 تدريب تلقائي: \(msg)")
+                guard let self = self else { return }
+                if ok {
+                    // نجاح؟ اتعلم عنوان الثكنة من الصفحة الحالية عشان المرة الجاية نروحلها على طول
+                    if let url = self.webView?.url {
+                        self.barracksPath = Self.trainablePath(from: url)
+                        self.logActivity("🐴 تدريب تلقائي: \(msg)")
+                    }
+                } else {
+                    self.gotoBarracks(failReason: msg)
+                }
             }
         }
+    }
+
+    /// من URL كامل: المسار مع علامة الاستفهام (من غير vid2 عشان يشتغل مع أي قريتنا الحالية)
+    private static func trainablePath(from url: URL) -> String {
+        var path = url.path
+        if let q = url.query {
+            let parts = q.components(separatedBy: "&").filter { !$0.hasPrefix("vid2") }
+            if !parts.isEmpty { path += "?" + parts.joined(separator: "&") }
+        }
+        return path
+    }
+
+    /// رايح للثكنة: الأول بنجرب الكاش، وبعدين ندور على لينك "ثكنة" في الصفحة، ولو مش لاقيين نمشي لـ dorf2.
+    private func gotoBarracks(failReason: String) {
+        guard pendingAction == nil else { return }
+        let cur = webView?.url.map { Self.trainablePath(from: $0) } ?? ""
+
+        if !barracksPath.isEmpty {
+            if cur == barracksPath {
+                // الكاش وصلنا لنفس الصفحة ومفيش فورم — الكاش مش ثكنة، نمسحه وندور بنفسنا
+                barracksPath = ""
+            } else {
+                logActivity("🐴 \(failReason) — رايح الثكنة (\(barracksPath))")
+                navigate(path: barracksPath)
+                return
+            }
+        }
+
+        engine.findBarracksLink { [weak self] href in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let href = href, !href.isEmpty, let u = URL(string: href) {
+                    self.barracksPath = Self.trainablePath(from: u)
+                    self.logActivity("🐴 \(failReason) — لقيت الثكنة، رايحلها (\(self.barracksPath))")
+                    self.navigate(path: self.barracksPath)
+                } else if self.pageKind != "dorf2" {
+                    self.logActivity("🐴 \(failReason) — ماشي لساحة القرية عشان ألاقي الثكنة")
+                    self.navigate(path: "/dorf2")
+                } else {
+                    self.logActivity("🐴 \(failReason) — افتح الثكنة مرة واحدة في اللعبة عشان التطبيق يتعلم مكانها")
+                }
+            }
+        }
+    }
+
+    /// آخر تنقل عمله البوت بنفسه — بنستخدمه علشان نعرف إن الصفحة الحالية جاية من البوت
+    private var lastBotNavAt = Date.distantPast
+
+    func navigate(path: String) {
+        let clean = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        guard let url = URL(string: "https://utatar.com/" + clean) else { return }
+        lastBotNavAt = Date()
+        webView?.load(URLRequest(url: url))
     }
 
     func checkForAttacks() {

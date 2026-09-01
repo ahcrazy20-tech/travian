@@ -41,9 +41,14 @@ struct AutomationPanelView: View {
                             Text("تشغيل الأوتوماتك")
                                 .font(.body)
                                 .foregroundColor(.white)
-                            Text(viewModel.isAutomationEnabled ? "شغّال ✅ — بيفضل شغال في الخلفية 🎵" : "موقف ❌")
+                            Text(viewModel.isAutomationEnabled ? "شغّال ✅ — الشاشة مش هتقفل ويفضل شغال في الخلفية 🎵" : "موقف ❌")
                                 .font(.caption)
                                 .foregroundColor(.gray)
+                            if viewModel.isAutomationEnabled {
+                                Text("سيب التطبيق مفتوح (والشاحن موصول الأحسن) — التدريب بيجيلك لوحده، والبوت بيدرب لوحده لما يوصل للثكنة")
+                                    .font(.caption2)
+                                    .foregroundColor(.gray.opacity(0.8))
+                            }
                         }
 
                         Spacer()
@@ -616,7 +621,7 @@ struct SpyReportsCard: View {
             }
 
             if viewModel.spyReports.isEmpty {
-                Text("افتح صفحة التقارير (berichte.php) بعد ما الجواسيس يرجعوا")
+                Text("افتح صفحة التقارير (berichte) بعد ما الجواسيس يرجعوا")
                     .font(.caption2)
                     .foregroundColor(.gray)
             } else {

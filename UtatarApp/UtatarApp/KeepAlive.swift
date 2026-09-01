@@ -11,16 +11,19 @@ final class KeepAlive: NSObject {
     var isRunning: Bool { player?.isPlaying == true }
 
     func start() {
-        guard player == nil else { return }
+        // لو شغال فعلًا مفيش حاجة نعملها
+        if player?.isPlaying == true { return }
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, options: [.mixWithOthers])
         try? session.setActive(true)
-        if let url = Self.silentWavURL() {
+        if player == nil, let url = Self.silentWavURL() {
             player = try? AVAudioPlayer(contentsOf: url)
-            player?.numberOfLoops = -1     // تكرار لا نهائي
-            player?.volume = 0.01          // صوت صفير ما حدش يسمعه
-            player?.play()
         }
+        // iOS ساعات بيقف الصوت لوحده — نعيد تشغيله كل ما نتنادى
+        player?.numberOfLoops = -1     // تكرار لا نهائي
+        player?.volume = 0.01          // صوت صفير ما حدش يسمعه
+        player?.prepareToPlay()
+        player?.play()
     }
 
     func stop() {

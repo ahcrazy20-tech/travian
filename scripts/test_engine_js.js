@@ -19,8 +19,9 @@ function extractStatic(name) {
   return body;
 }
 function extractFunc(name) {
-  const marker = `static func ${name}`;
+  let marker = `static func ${name}`;
   let i = swift.indexOf(marker);
+  if (i < 0) { marker = `static let ${name}`; i = swift.indexOf(marker); }
   if (i < 0) throw new Error('func not found: ' + name);
   const start = swift.indexOf('"""', i);
   const end = swift.indexOf('"""', start + 3);
@@ -264,6 +265,16 @@ if (!raidClicked || raidClicked.getAttribute('value') !== '3') {
   throw new Error('FAIL raid radio value 3 not clicked');
 }
 if (!sendForm.children.find(c => c.clicked)) throw new Error('FAIL send button not clicked');
+
+// ==== findBarracksLinkJS: finds the barracks link by Arabic name on a dorf2-like page ====
+const bImg = t('img', { src: 'img/34.gif', title: 'الثكنة مستوى 10' });
+t('a', { href: 'build?id=34' }, [bImg]);
+const sImg = t('img', { src: 'img/20.gif', title: 'الإسطبل مستوى 3' });
+t('a', { href: 'build?id=20' }, [sImg]);
+const barracksJS = extractFunc('findBarracksLinkJS');
+const barr = JSON.parse(eval(barracksJS));
+console.log('BARRACKS:', JSON.stringify(barr));
+if (barr.href !== 'https://utatar.com/build?id=34') throw new Error('FAIL barracks link, got ' + barr.href);
 
 // ==== trainBlindJS: fills every tf[..] input with count (capped by max) and submits ====
 inp11.value = ''; inp12.value = ''; inp14.value = '';

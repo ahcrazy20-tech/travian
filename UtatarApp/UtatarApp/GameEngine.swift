@@ -639,12 +639,41 @@ final class GameEngine: NSObject {
 
     /// التدريب الأعمى بعدد محدد: بيدور على أي فورم تدريب (t[11].. / tf[..]) في أي صفحة
     /// وبيملأ كل نوع بالعدد (مع احترام الحد الأقصى لو معروض) ويدرس.
-    func trainBlind(count: Int, completion: @escaping (String) -> Void) {
+    func trainBlind(count: Int, completion: @escaping (Bool, String) -> Void) {
         runJSON(Self.trainBlindJS(count: count)) { obj in
             let ok = (obj?["ok"] as? Bool) ?? false
-            completion((obj?["message"] as? String) ?? (ok ? "تم" : "فشل"))
+            completion(ok, (obj?["message"] as? String) ?? (ok ? "تم" : "فشل"))
         }
     }
+
+    /// بيدور على لينك الثكنة في الصفحة الحالية (نص/عنوان فيه "ثكنة") — عشان نوصلها أوتوماتك.
+    func findBarracksLink(completion: @escaping (String?) -> Void) {
+        runJSON(Self.findBarracksLinkJS) { obj in
+            completion(obj?["href"] as? String)
+        }
+    }
+
+    static let findBarracksLinkJS = """
+    (function(){
+      try{
+        var links=document.querySelectorAll('a[href]');
+        for(var i=0;i<links.length;i++){
+          var a=links[i];
+          var href=a.getAttribute('href')||'';
+          if(!/^build\\?(id|bid)=\\d+/.test(href) && href.indexOf('build')<0) continue;
+          var txt=((a.textContent||'')+' '+(a.getAttribute('title')||'')+' '+(a.className||''));
+          var img=a.querySelector('img');
+          if(img){ txt+=' '+(img.getAttribute('title')||'')+' '+(img.getAttribute('alt')||'')+' '+(img.getAttribute('class')||''); }
+          if(txt.indexOf('ثكنة')>=0 || txt.indexOf('thkena')>=0 || /(^|\\s)g19(\\s|$)/.test(txt)){
+            if(href.indexOf('http')!==0) href='https://utatar.com/'+href.replace(/^\\//,'');
+            return JSON.stringify({href:href});
+          }
+        }
+        return JSON.stringify({href:null});
+      }catch(e){ return JSON.stringify({href:null}); }
+    })();
+    """
+
 
     static func trainBlindJS(count: Int) -> String {
         return """
