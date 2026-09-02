@@ -125,11 +125,11 @@ class WebViewModel: NSObject, ObservableObject {
                 self.recordingMode = nil
                 let save = ["url": rec["url"] ?? "", "body": rec["body"] ?? ""]
                 if mode == "farm" {
-                    UD.set(save, forKey: "farmRecording")
+                    self.UD.set(save, forKey: "farmRecording")
                     self.nextFarmAt = Date().addingTimeInterval(60)  // أقرب فرصة يطلق الضغطة المسجلة
                     self.logActivity("✅ سجلت ضغطة النهب بتاعتك! من دلوقتي هيطلقها لوحده كل \(self.farmIntervalMin) دقيقة من غير ما يفتح أي صفحة (حتى مش قايمة النهب)")
                 } else {
-                    UD.set(save, forKey: "retreatRecording")
+                    self.UD.set(save, forKey: "retreatRecording")
                     let x = self.bodyParam(save["body"] ?? "", "x")
                     let y = self.bodyParam(save["body"] ?? "", "y")
                     let c = self.bodyParam(save["body"] ?? "", "c")
