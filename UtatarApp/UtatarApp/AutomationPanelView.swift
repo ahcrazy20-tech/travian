@@ -121,6 +121,9 @@ struct AutomationPanelView: View {
                     }
                     .padding(.horizontal)
 
+                    // ===== حفظ بيانات الدخول (عشان مش كل مقفل وافتح أسجل) =====
+                    LoginCard(viewModel: viewModel)
+
                     // ===== التدريب (أهم كارت — فوق خالص) =====
                     TrainingCard(viewModel: viewModel)
 
@@ -778,6 +781,86 @@ struct DefenseCard: View {
 }
 
 // MARK: - كارت قائمة النهب
+
+// MARK: - كارت حفظ بيانات الدخول (Keychain على الموبايل — مش بتخرج من الجهاز)
+
+struct LoginCard: View {
+    @ObservedObject var viewModel: WebViewModel
+    @State private var user = ""
+    @State private var pass = ""
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("🔐 حفظ بيانات الدخول")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                if viewModel.hasSavedLogin {
+                    Toggle("", isOn: $viewModel.autoLoginEnabled)
+                        .utatarTint(.green)
+                        .labelsHidden()
+                        .frame(width: 60)
+                }
+            }
+
+            if viewModel.hasSavedLogin {
+                Text("✅ الداتا محفوظة على موبايلك (Keychain) — أي مرة تلاقي صفحة الدخول البوت هيسجلها لوحده. لو غيرت الباسورد في اللعبة اكتبها تاني واضغط حفظ")
+                    .font(.caption2)
+                    .foregroundColor(.green.opacity(0.9))
+            } else {
+                Text("اكتبها مرة واحدة: بتتحفظ في موبايلك بس (Keychain مش UserDefaults) ومش بتخرج من الجهاز — وكل ما الجلسة تقفل البوت هيسجل دخولك لوحده")
+                    .font(.caption2)
+                    .foregroundColor(.gray.opacity(0.85))
+            }
+
+            if !viewModel.hasSavedLogin {
+                TextField("اسم المستخدم", text: $user)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("الباسورد", text: $pass)
+                    .font(.caption)
+                    .textFieldStyle(.roundedBorder)
+                Button(action: {
+                    viewModel.saveLogin(user: user, pass: pass)
+                    user = ""
+                    pass = ""
+                }) {
+                    Text("💾 حفظ وفعّل الدخول التلقائي")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .background(Color.green.opacity(0.8))
+                        .cornerRadius(6)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Text(viewModel.loginStatus.isEmpty ? "الدخول التلقائي شغال" : viewModel.loginStatus)
+                        .font(.caption2)
+                        .foregroundColor(viewModel.loginStatus.contains("❌") ? .red : .green)
+                    Spacer()
+                    Button(action: { viewModel.deleteLogin() }) {
+                        Text("🗑 مسح الداتا")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.gray)
+                            .cornerRadius(6)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
 
 struct FarmCard: View {
     @ObservedObject var viewModel: WebViewModel

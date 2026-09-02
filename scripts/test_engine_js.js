@@ -153,6 +153,7 @@ const sessionStorage = {
   getItem: k => (k in _store ? _store[k] : null),
   removeItem: k => { delete _store[k]; },
 };
+const screen = { width: 390, height: 844 };
 const fire = (type, target) => {
   const ev = new Event(type);
   ev.target = target;
@@ -519,6 +520,40 @@ setTimeout(async () => {
   fire('submit', a2bForm);
   if (sessionStorage.getItem('utatarRecPost')) throw new Error('FAIL recorder captured while unarmed');
   console.log('RECORDER ✓ (retreat a2b with x/y/c=4/s1 + farm startRaid; arm consumed; unarmed ignored)');
+
+  // ==== AUTO-LOGIN (حفظ بيانات الدخول): EBDA login.tpl form ====
+  const loginForm = t('form', { name: 'snd', action: 'login.php' }, [
+    t('input', { type: 'hidden', name: 'ft', value: 'a4' }),
+    t('input', { type: 'text', name: 'user', value: '' }),
+    t('input', { type: 'password', maxlength: '20', name: 'pw', value: '' }),
+    t('input', { type: 'checkbox', name: 'lowRes', value: '1' }),
+    t('button', { type: 'submit', name: 's1', value: 'دخول' }),
+    t('input', { type: 'hidden', name: 'w', value: '' }),
+    t('input', { type: 'hidden', name: 'login', value: '1725270000' }),
+    t('input', { type: 'hidden', name: 'forgotPassword', value: '1' }),
+  ]);
+  const loginJS = extractFunc('tryAutoLoginJS')
+    .split('\\(u)').join(JSON.stringify('احمد123'))
+    .split('\\(pw)').join(JSON.stringify('سري جدا') );
+  const loginRes = JSON.parse(eval(loginJS));
+  if (loginRes.found !== true || loginRes.filled !== true || loginRes.submitted !== true) {
+    throw new Error('FAIL autologin result: ' + JSON.stringify(loginRes));
+  }
+  const lfUser = loginForm.querySelector('input[name="user"]');
+  const lfPw = loginForm.querySelector('input[name="pw"]');
+  if (lfUser.value !== 'احمد123') throw new Error('FAIL autologin user not filled: ' + lfUser.value);
+  if (lfPw.value !== 'سري جدا') throw new Error('FAIL autologin pw not filled');
+  const wVal = loginForm.querySelector('input[name="w"]').value;
+  if (wVal !== '390:844') throw new Error('FAIL autologin screen w: ' + wVal);
+  await sleep(600);
+  if (!loginForm.submitted) throw new Error('FAIL autologin form not natively submitted');
+  // غير لوجين: مفيش password input → found:false
+  const noLoginJS = extractFunc('tryAutoLoginJS').split('\\(u)').join('""').split('\\(pw)').join('""');
+  // صفحة من غير أي password input خالص (نفضّي الـ DOM — آخر اختبار)
+  H.els.length = 0;
+  const res2 = JSON.parse(eval(noLoginJS));
+  if (res2.found !== false) throw new Error('FAIL autologin must not fire without password input: ' + JSON.stringify(res2));
+  console.log('AUTO-LOGIN ✓ (EBDA login form filled: user/pw/w, native submit; no password input -> skip)');
 
   console.log('\nALL JS TESTS PASSED ✅');
 }, 4600);

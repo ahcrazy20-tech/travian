@@ -127,6 +127,10 @@ struct WebViewContainer: UIViewRepresentable {
         }
         
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            // نعرف مين اللي بيتحرك: لو مش البوت يبقى المستخدم — والبوت وقتها يسيب اللعبة له
+            if navigationAction.targetFrame?.isMainFrame != false {
+                DispatchQueue.main.async { self.viewModel.noteNavigation() }
+            }
             // Allow all navigation within the game
             decisionHandler(.allow)
         }

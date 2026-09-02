@@ -1,8 +1,50 @@
 import Foundation
 import UIKit
 import WebKit
+import Security
 import Combine
 import UserNotifications
+
+
+/// تخزين آمن على الجهاز (Keychain) — بيانات الدخول مش بتخرج من الموبايل خالص
+enum Keychain {
+    static let service = "utatar-app"
+
+    static func set(_ value: String, forKey key: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key
+        ]
+        SecItemDelete(query as CFDictionary)
+        var attrs = query
+        attrs[kSecValueData as String] = Data(value.utf8)
+        SecItemAdd(attrs as CFDictionary, nil)
+    }
+
+    static func get(_ key: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var out: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
+        guard status == errSecSuccess, let d = out as? Data else { return nil }
+        return String(data: d, encoding: .utf8)
+    }
+
+    static func del(_ key: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+}
 
 class WebViewModel: NSObject, ObservableObject {
     @Published var isLoading = true
@@ -83,6 +125,72 @@ class WebViewModel: NSObject, ObservableObject {
     private var lastAlertNotifyAt = Date.distantPast
     /// بعد إطلاق هروب: نستنى 10 دقايق قبل هروب تاني (علامة att1 بتفضل ظاهرة طول ما الهجوم في السكة)
     private var lastRetreatAt = Date.distantPast
+
+    // MARK: - حفظ بيانات الدخول + الدخول التلقائي لما الجلسة تقفل
+    @Published var autoLoginEnabled: Bool = true { didSet { UD.set(autoLoginEnabled, forKey: "autoLogin") } }
+    @Published var hasSavedLogin = false
+    @Published var loginStatus = ""
+    private var autoLoginTries = 0
+    private var autoLoginWindowAt = Date.distantPast
+    private var lastAutoLoginAt = Date.distantPast
+
+    /// 🔐 حفظ الداتا: بتتكتب في الـ Keychain على الموبايل بس — مفيش حاجة بتتبعت لأي حد
+    func saveLogin(user: String, pass: String) {
+        let u = user.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !u.isEmpty, !pass.isEmpty else {
+            loginStatus = "❌ اكتب اسم المستخدم والباسورد الأول"
+            return
+        }
+        Keychain.set(u, forKey: "loginUser")
+        Keychain.set(pass, forKey: "loginPass")
+        hasSavedLogin = true
+        autoLoginTries = 0
+        autoLoginWindowAt = Date.distantPast
+        loginStatus = "✅ الداتا محفوظة — لو الجلسة قفلت هسجل دخولك لوحدي"
+        logActivity("🔐 حفظت بيانات الدخول على الموبايل (Keychain) — من دلوقتي لو طلعت صفحة الدخول هسجلها لوحدي")
+    }
+
+    func deleteLogin() {
+        Keychain.del("loginUser")
+        Keychain.del("loginPass")
+        hasSavedLogin = false
+        loginStatus = ""
+        logActivity("🗑 مسحت بيانات الدخول المحفوظة")
+    }
+
+    /// أول ما أي صفحة تخلص تحميل: لو دي صفحة الدخول والداتا محفوظة → سجل لوحك (بحرص: 3 محاولات بحد أقصى)
+    private func tryAutoLogin() {
+        guard autoLoginEnabled,
+              let u = Keychain.get("loginUser"), !u.isEmpty,
+              let p = Keychain.get("loginPass"), !p.isEmpty else { return }
+        let urlStr = (webView?.url?.absoluteString ?? "").lowercased()
+        guard urlStr.contains("login") else {
+            if autoLoginTries != 0 { autoLoginTries = 0; autoLoginWindowAt = Date.distantPast }
+            return
+        }
+        if Date().timeIntervalSince(autoLoginWindowAt) < 240, autoLoginTries >= 3 {
+            if !loginStatus.contains("غلط") {
+                loginStatus = "❌ جربت 3 مرات ورجعت صفحة الدخول — الغالب الداتا المحفوظة غلط. اكتبها تاني واضغط حفظ"
+                logActivity("❌ الدخول التلقائي فشل 3 مرات — حدّث الداتا من كارت حفظ الداتا")
+            }
+            return
+        }
+        guard Date().timeIntervalSince(lastAutoLoginAt) > 20 else { return }
+        if autoLoginTries == 0 { autoLoginWindowAt = Date() }
+        lastAutoLoginAt = Date()
+        engine.tryAutoLogin(user: u, pass: p) { [weak self] found, submitted, note in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if found && submitted {
+                    self.autoLoginTries += 1
+                    self.loginStatus = "🔐 سجلت دخولك لوحدي (محاولة \(self.autoLoginTries))..."
+                    self.logActivity("🔐 لقيت صفحة الدخول — بسجل دخولك لوحدي بالداتا المحفوظة")
+                } else if found {
+                    self.loginStatus = "⚠️ لقيت صفحة الدخول بس مقدرتش أملأ الفورم (\(note))"
+                }
+            }
+        }
+    }
 
     // MARK: - التسجيل باختيارات: 🔴 سجّل هروب / 🔴 سجّل نهب → تعملها بإيدك مرة → البوت يعيدها
     @Published var recordingMode: String? = nil   // "farm" أو "retreat" — شغال دلوقتي؟
@@ -192,6 +300,8 @@ class WebViewModel: NSObject, ObservableObject {
         autoCollectResources = UD.bool(forKey: "autoCollect")
         autoBuildQueue = UD.bool(forKey: "autoBuild")
         autoSpyEnabled = UD.bool(forKey: "autoSpy")
+        autoLoginEnabled = UD.object(forKey: "autoLogin") == nil ? true : UD.bool(forKey: "autoLogin")
+        hasSavedLogin = (Keychain.get("loginPass") != nil)
         autoTrainCount = UD.object(forKey: "autoTrainCount") == nil ? 10 : UD.integer(forKey: "autoTrainCount")
         autoAttackCount = UD.object(forKey: "autoAttackCount") == nil ? 50 : UD.integer(forKey: "autoAttackCount")
         autoRetreatEnabled = UD.bool(forKey: "autoRetreat")
@@ -626,6 +736,8 @@ class WebViewModel: NSObject, ObservableObject {
 
     /// بيتم ناداه بعد ما أي صفحة تخلص تحميل — قراءة + تنفيذ المهمة المعلقة.
     func handlePageLoaded() {
+        // لو الجلسة قفلت وطلعت صفحة الدخول: سجل لوحك فورًا بالداتا المحفوظة
+        tryAutoLogin()
         refreshGameData()
         advancePendingAction()
         recordCurrentPageIfNeeded()
@@ -1230,8 +1342,27 @@ class WebViewModel: NSObject, ObservableObject {
 
     /// آخر تنقل عمله البوت بنفسه — بنستخدمه علشان نعرف إن الصفحة الحالية جاية من البوت
     private var lastBotNavAt = Date.distantPast
+    /// آخر تنقل المستخدم عمله بإيده — البوت ماينقلش لو المستخدم لسه بيتحرك (دي كانت سبب "بيرجعني للصفحة الرئيسة")
+    private var lastUserNavAt = Date.distantPast
+    private var userActiveHintShown = false
 
-    func navigate(path: String) {
+    /// نندها من الكووردinator أول ما أي تنقل يقرر — لو مش من البوت يبقى المستخدم هو اللي بيتحرك
+    func noteNavigation() {
+        if Date().timeIntervalSince(lastBotNavAt) > 3 {
+            lastUserNavAt = Date()
+            userActiveHintShown = false
+        }
+    }
+
+    func navigate(path: String, essential: Bool = false) {
+        // المستخدم ماسك اللعبة دلوقتي؟ البوت يسيبه (إلا الهروب — ده ضروري)
+        if !essential, Date().timeIntervalSince(lastUserNavAt) < 45 {
+            if !userActiveHintShown {
+                userActiveHintShown = true
+                logActivity("✋ لسه بتستخدم اللعبة — مش هنقل وراك لحد ما تسيبها شوية")
+            }
+            return
+        }
         guard Date() >= submitQuietUntil else {
             logActivity("⏳ مستني تأكيد الإرسال — مش بنقل دلويتي")
             return

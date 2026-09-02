@@ -569,6 +569,39 @@ final class GameEngine: NSObject {
     (function(){ try{ sessionStorage.setItem('utatarRecArm','0'); return JSON.stringify({ok:true}); }catch(e){ return JSON.stringify({ok:false}); } })();
     """
 
+    /// الدخول التلقائي: صفحة اللوجين في محرك EBDA (login.tpl) = form name=snd action=login.php
+    /// فيها user/pw + hidden w (مقاس الشاشة) + ft=a4 + زرار s1. بنملأ بنفس الأسماء وبنضغط بالفورم نفسه.
+    static func tryAutoLoginJS(user: String, pass: String) -> String {
+        let u = (try? JSONEncoder().encode(user)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+        let pw = (try? JSONEncoder().encode(pass)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+        return """
+        (function(){
+          try{
+            var pwInput=document.querySelector('input[type="password"]');
+            if(!pwInput) return JSON.stringify({found:false});
+            var f=pwInput.closest('form') || document.querySelector('form[name="snd"],form[action*="login"]');
+            if(!f) return JSON.stringify({found:true,filled:false,note:'مفيش فورم حوالين حقل الباسورد'});
+            var uf=f.querySelector('input[name="user"]') || f.querySelector('input[type="text"]');
+            if(!uf) return JSON.stringify({found:true,filled:false,note:'مش لاقي حقل اسم المستخدم'});
+            var LU=\(u); var LP=\(pw);
+            uf.value=LU; pwInput.value=LP;
+            var wf=f.querySelector('input[name="w"]');
+            if(wf){ try{ wf.value=screen.width+':'+screen.height; }catch(e2){ wf.value='390:844'; } }
+            setTimeout(function(){ try{ if(f.requestSubmit){ f.requestSubmit(); } else if(f.submit){ f.submit(); } }catch(e3){} }, 400);
+            return JSON.stringify({found:true,filled:true,submitted:true,field:String(uf.getAttribute('name'))});
+          }catch(e){ return JSON.stringify({found:false,error:String(e)}); }
+        })();
+        """
+    }
+
+    func tryAutoLogin(user: String, pass: String, completion: @escaping (Bool, Bool, String) -> Void) {
+        runJSON(Self.tryAutoLoginJS(user: user, pass: pass)) { obj in
+            let found = (obj?["found"] as? Bool) ?? false
+            let submitted = (obj?["submitted"] as? Bool) ?? false
+            completion(found, submitted, obj?["note"] as? String ?? obj?["error"] as? String ?? "")
+        }
+    }
+
     /// بيقرا ويستهلك الضغطة المسجلة
     static let readRecordingJS = """
     (function(){ try{
