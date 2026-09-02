@@ -81,6 +81,8 @@ class WebViewModel: NSObject, ObservableObject {
     private var nextFarmAt = Date.distantPast
     private var farmInfoShown = false
     private var lastAlertNotifyAt = Date.distantPast
+    /// بعد إطلاق هروب: نستنى 10 دقايق قبل هروب تاني (علامة att1 بتفضل ظاهرة طول ما الهجوم في السكة)
+    private var lastRetreatAt = Date.distantPast
     /// أدق مهمة تدريب معلقة — النظام عمره ما ينسى التدريب حتى مع فترات الهدوء
     private func ensureTrainQueued(withinMinutes mi: Int) {
         let next = Date().addingTimeInterval(TimeInterval(mi * 60))
@@ -290,7 +292,8 @@ class WebViewModel: NSObject, ObservableObject {
             // نحتاج صفحة قايمة النهب — ندخل عليها بنفسنا (مرة كل فترة، مش رفرش مستمر)
             farmInfoShown = false
             logActivity("🏴 ماشي لقايمة النهب عشان نطلق الهجمة...")
-            navigate(path: "build.php?id=39&t=99")
+            // عنوان سيرفرك الحقيقي من تسجيل صفحاتك: bid=17 (نقطة التجمع) + t=4 (قايمة النهب)
+            navigate(path: "build?bid=17&t=4")
         }
     }
 
@@ -298,13 +301,13 @@ class WebViewModel: NSObject, ObservableObject {
         engine.launchFarmList { [weak self] ok, msg in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                if msg == "__pending__" { return }
                 if ok {
-                    self.nextFarmAt = Date().addingTimeInterval(TimeInterval(self.farmIntervalMin * 60))
+                    // الإرسال الأصلي بينقل الصفحة — نعلمه زي أي تنقل بوت + هدوء للطلب اللي طاير
+                    self.lastBotNavAt = Date()
                     self.markSubmitBusy()
+                    self.nextFarmAt = Date().addingTimeInterval(TimeInterval(self.farmIntervalMin * 60))
                     self.logActivity("🏴 \(msg) — الجاية بعد \(self.farmIntervalMin) دقيقة ✅")
                 } else {
-                    // القايمة مش هنا؟ نجرب بعد 5 دقايق (وبرضه من غير رفرش متكرر)
                     self.nextFarmAt = Date().addingTimeInterval(300)
                     self.logActivity("⚠️ \(msg) — هجرب تاني بعد 5 دقايق")
                 }
@@ -673,8 +676,13 @@ class WebViewModel: NSObject, ObservableObject {
                         self.sendNotification(title: "🚨 هجوم قادم!", body: "البوت رصد علامة الهجوم في التحركات — افتح اللعبة حالاً")
                     }
                     if self.autoRetreatEnabled, self.pendingAction == nil {
-                        self.logActivity("🏃 بجهز الهروب لوجهة الهروب المسجلة...")
-                        self.startRetreat(auto: true)
+                        if Date().timeIntervalSince(self.lastRetreatAt) < 600 {
+                            self.logActivity("🏃 الهروب انطلق قبل شوية — مش هكرره (الهجوم لسه في السكة طبعًا)")
+                        } else {
+                            self.lastRetreatAt = Date()
+                            self.logActivity("🏃 بجهز الهروب لوجهة الهروب المسجلة...")
+                            self.startRetreat(auto: true)
+                        }
                     }
                 } else {
                     let df = DateFormatter()

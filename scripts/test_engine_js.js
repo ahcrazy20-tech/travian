@@ -357,34 +357,16 @@ const fl = JSON.parse(eval(extractFunc('farmListsJS')));
 console.log('FARM LISTS:', JSON.stringify(fl));
 if (fl.lists.length !== 1 || fl.lists[0].lid !== '7' || fl.lists[0].tribe !== '2') throw new Error('FAIL farm list parse: ' + JSON.stringify(fl));
 
-// launch: nothing checked -> bot checks first slot; body serialized exactly
-window.__utatarFetchTrain = 'pending';
-const launchCalls = [];
-const fetch2 = function(url, opts) {
-  launchCalls.push({ url: url, opts: opts || {} });
-  return Promise.resolve({ ok: true, status: 200, redirected: true });
-};
-const realFetch = fetch; const realWindowFetch = window.fetch;
-eval(extractFunc('launchFarmKickJS').split('fetch(').join('fetch2(').split('fetch2.').join('fetch.'));
-setTimeout(() => {}, 0);
-const launchCheck = setInterval(() => {
-  const st = String(window.__utatarFetchTrain);
-  if (st === 'pending') return;
-  clearInterval(launchCheck);
-  const res = JSON.parse(st);
-  console.log('FARM LAUNCH:', JSON.stringify(res));
-  if (res.ok !== true || res.message.indexOf('هدف') < 0) throw new Error('FAIL farm launch: ' + res.message);
-  // بعد الإطلاق السلوتين لازم يكونوا معلّمين (البوت علّم الأول والباقي كانوا معلّمين؟ لا: الاثنين on)
-  const marks2 = farmForm.querySelectorAll('input.markSlot');
-  if (!marks2[0].checked) throw new Error('FAIL farm bot must auto-check the first slot');
-  const post = launchCalls[0];
-  if (!post || post.url.indexOf('build.php?id=39&t=99&action=startRaid') < 0) throw new Error('FAIL farm url: ' + (post && post.url));
-  const b = post.opts.body;
-  for (const piece of ['action=startRaid', 'a=c35', 'lid=7', 'tribe=2', 'slot101=']) {
-    if (b.indexOf(piece) < 0) throw new Error('FAIL farm body missing ' + piece + ' in ' + b);
-  }
-  console.log('FARM LAUNCH ✓ (exact startRaid form, first slot auto-checked)');
-  });
+// launch: native form submit (identical to user press; no fetch = no logout risk)
+farmForm.submitted = false;
+farmForm.requestSubmit = function() { this.submitted = true; };
+const resFarm = JSON.parse(eval(extractFunc('launchFarmKickJS')));
+console.log('FARM LAUNCH:', JSON.stringify(resFarm));
+if (resFarm.ok !== true) throw new Error('FAIL farm launch: ' + resFarm.message);
+if (!farmForm.submitted) throw new Error('FAIL farm form was NOT natively submitted');
+const marks2 = farmForm.querySelectorAll('input.markSlot');
+if (!marks2[0].checked) throw new Error('FAIL farm bot must auto-check the first slot');
+console.log('FARM LAUNCH ✓ (native submit, first slot auto-checked, no fetch/logout risk)');
 
 // ==== readVillageInfoJS: parses player/coords from a dorf3-style info page ====
 const vbody = t('body', {}, [

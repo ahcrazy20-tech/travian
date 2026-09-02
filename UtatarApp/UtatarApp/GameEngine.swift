@@ -438,25 +438,15 @@ final class GameEngine: NSObject {
     /// إطلاق قايمة نهب: POST بنفس فورم الصفحة بالظبط (action/lid/a/sort/tribe/direction + السلوتات المحددة)
     /// بيقرا الفورم الأصلي من الصفحة ويسلسل كل الحقول المخفية — أمان 100% ضد اختلاف النسخ.
     func launchFarmList(completion: @escaping (Bool, String) -> Void) {
-        runJSON(Self.launchFarmKickJS) { _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                guard let self = self else { return }
-                self.runJSON(Self.fetchTrainResultJS) { obj in
-                    let state = (obj?["state"] as? String) ?? "pending"
-                    if state == "pending" || state.isEmpty {
-                        completion(false, "__pending__")
-                        return
-                    }
-                    completion(((obj?["ok"] as? Bool) ?? false), obj?["message"] as? String ?? "مفيش رد")
-                }
-            }
+        runJSON(Self.launchFarmKickJS) { obj in
+            let ok = (obj?["ok"] as? Bool) ?? false
+            completion(ok, (obj?["message"] as? String) ?? "مفيش رد من صفحة القايمة")
         }
     }
 
     static let launchFarmKickJS = """
     (function(){
       try{
-        window.__utatarFetchTrain='pending';
         var forms=document.querySelectorAll('form');
         var target=null;
         forms.forEach(function(f){
@@ -466,33 +456,19 @@ final class GameEngine: NSObject {
           if(hid && (hid.getAttribute('value')==='startRaid'||hid.getAttribute('value')==='raidList'||hid.getAttribute('value')==='raid_all')) target=f;
           else if(act.indexOf('startRaid')>=0) target=f;
         });
-        if(!target){
-          window.__utatarFetchTrain=JSON.stringify({ok:false,message:'مفيش قايمة نهب في الصفحة — افتح نقطة التجمع ← تبويب قايمة النهب (t=99)'});
-          return;
-        }
-        // السلوتات: علّم أول هدف لو مفيش حاجة محددة (زي ما المستخدم بيعمل بإيده)
+        if(!target) return JSON.stringify({ok:false,message:'مفيش قايمة نهب في الصفحة — افتح نقطة التجمع ← تبويب قايمة النهب'});
+        // السلوتات: علّم أول هدف لو مفيش حاجة محددة
         var marks=target.querySelectorAll('input.markSlot');
         var anyChecked=false;
         marks.forEach(function(mk){ if(mk.checked) anyChecked=true; });
         if(!anyChecked && marks.length>0){ marks[0].checked=true; }
-        // سلسل الفورم بالظبط زي المتصفح
-        var els=target.querySelectorAll('input, select, textarea, button');
-        var parts=[];
-        for(var i=0;i<els.length;i++){
-          var e2=els[i]; var nm=e2.getAttribute('name'); if(!nm) continue;
-          var ty=(e2.getAttribute('type')||'').toLowerCase();
-          if(ty==='submit'||ty==='button') continue;
-          if(ty==='checkbox' && !e2.checked) continue;
-          if(ty==='radio' && !e2.checked) continue;
-          parts.push(encodeURIComponent(nm)+'='+encodeURIComponent(e2.value||''));
-        }
-        var act=target.getAttribute('action')||'build.php?id=39&t=99';
-        var url=act.indexOf('http')===0?act:('https://utatar.com/'+act.replace(/^\\//,''));
-        return fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:parts.join('&')})
-          .then(function(r){
-            window.__utatarFetchTrain=JSON.stringify({ok:(r.ok===true),message:'🏴 أمر نهب انطلق ('+parts.filter(function(pp){return pp.indexOf('slot')===0;}).length+' هدف)'+(r.redirected?' ✅':''),status:r.status});
-          });
-      }catch(e){ try{ window.__utatarFetchTrain=JSON.stringify({ok:false,message:e.message}); }catch(e2){} }
+        // الإطلاق بإرسال الفورم الأصلي نفسه — مطابق 100% لضغطة إيدك (مفيش خطر لوج آوت)
+        try{ window.__utatarNav=true; }catch(e2){}
+        if(target.requestSubmit){ target.requestSubmit(); }
+        else if(target.submit){ target.submit(); }
+        else { return JSON.stringify({ok:false,message:'مقدرتش أرسل الفورم'}); }
+        return JSON.stringify({ok:true,message:'🏴 أمر النهب انطلق بإرسال الفورم الأصلي ✅'});
+      }catch(e){ return JSON.stringify({ok:false,message:e.message}); }
     })();
     """
 
@@ -1348,10 +1324,10 @@ final class GameEngine: NSObject {
     (function(){
       var hits=[];
       var incoming=false;
-      // الحقيقة من مصدر المحرك (movement.tpl):
-      // هجوم قادم عليك = <img class="att1"> + <span class="a1"> جوه div.movements
-      // (att2/a2 = نهب قادم، att3 = راجعين). دي أدق إشارة ومصدرها كود اللعبة نفسه.
-      var incomingSels=['.movements img.att1','#movements img.att1','.movements img.att2','#movements img.att2','.movements span.a1','.movements span.a2'];
+      // الحقيقة من مصدر محرك EBDA (movement.tpl):
+      // att1/a1 = هجوم قادم عليك — att2/a2 = هجماتك الخارجة (نهبك!) — att3 = راجعين/تعزيز
+      // فبنثق بس في att1/a1: أي حاجة تانية = حركات عادية مش إنذار
+      var incomingSels=['.movements img.att1','#movements img.att1','.movements span.a1','.movements .a1'];
       incomingSels.forEach(function(sel){
         try{
           var els=document.querySelectorAll(sel);
