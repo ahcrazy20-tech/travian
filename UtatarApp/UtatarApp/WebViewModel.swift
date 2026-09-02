@@ -260,7 +260,7 @@ class WebViewModel: NSObject, ObservableObject {
         if autoSpyEnabled {
             exploreAndSpy()
         }
-        checkAlertAndRetreat()
+        checkAlerts()
     }
 
     /// التجسس التلقائي: كل دورة تجسس للقرية اللي بعد الحالي (دورياً).
@@ -910,10 +910,11 @@ class WebViewModel: NSObject, ObservableObject {
             }
         } else if let fetchPairs = fetchPairs {
             // الأفضل: إعادة ضغطة المستخدم المسجلة (نفس الحقول اللي نجحت بالظبط)
-            if let saved = lastTrainPost, !saved["body", default: ""].isEmpty {
-                engine.trainReplay(saved: saved, pairs: fetchPairs, completion: handler)
-            } else {
+            let saved = lastTrainPost
+            if saved["body", default: ""].isEmpty {
                 engine.trainViaFetch(barracksPath: barracksPath, pairs: fetchPairs, completion: handler)
+            } else {
+                engine.trainReplay(saved: saved, pairs: fetchPairs, completion: handler)
             }
         }
     }
