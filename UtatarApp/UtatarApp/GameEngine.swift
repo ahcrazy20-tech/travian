@@ -506,6 +506,129 @@ final class GameEngine: NSObject {
 
     func installTrainSubmitHook() {
         runJSON(Self.trainSubmitHookJS) { _ in }
+        runJSON(Self.recSubmitHookJS) { _ in }
+    }
+
+    // MARK: - مسجل الأفعال العام (باختيارات): سجّل الهروب أو سجّل النهب بإيدك مرة → البوت يعيدها لوحده
+    // نفس فكرة تسجيل التدريب اللي اشتغلت: خطاف submit عام بيسجل أي فورم المستخدم ضغطها
+    // (بما فيها فورمات الإحداثيات x/y اللي خطاف التدريب بيتخطاها عن قصد) بس لما التسجيل "مُسلّح" بس.
+    static let recSubmitHookJS = """
+    (function(){
+      try{
+        if(window.__utatarRecHook) return;
+        window.__utatarRecHook=true;
+        var lastBtn=null;
+        document.addEventListener('click', function(ev){
+          try{
+            var t=ev.target; if(!t||!t.getAttribute) return;
+            var tn=String(t.tagName).toLowerCase();
+            var ty=(t.getAttribute('type')||'').toLowerCase();
+            if(tn==='input'&&ty==='submit'){ lastBtn={n:t.getAttribute('name'),v:t.value||''}; }
+            else if(tn==='button'){ lastBtn={n:t.getAttribute('name'),v:t.value||''}; }
+          }catch(e){}
+        }, true);
+        document.addEventListener('submit', function(ev){
+          try{
+            if(sessionStorage.getItem('utatarRecArm')!=='1') return;
+            // التسجيل بيقفل لوحده بعد 10 دقايق لو المستخدم ما سجلش حاجة
+            var at=parseInt(sessionStorage.getItem('utatarRecArmAt')||'0',10)||0;
+            if(at>0 && (Date.now()-at)>600000){ sessionStorage.setItem('utatarRecArm','0'); return; }
+            var f=ev.target; if(!f||!f.querySelectorAll) return;
+            var els=f.querySelectorAll('input,button,select,textarea');
+            var parts=[];
+            for(var i=0;i<els.length;i++){
+              var e2=els[i]; var nm=e2.getAttribute('name'); if(!nm) continue;
+              var ty=(e2.getAttribute('type')||'').toLowerCase();
+              if(ty==='submit'||ty==='button'||ty==='image') continue;
+              if(ty==='radio'&&!e2.checked) continue;
+              if(ty==='checkbox'&&!e2.checked) continue;
+              parts.push(encodeURIComponent(nm)+'='+encodeURIComponent(e2.value||''));
+            }
+            if(lastBtn&&lastBtn.n){ parts.push(encodeURIComponent(lastBtn.n)+'='+encodeURIComponent(lastBtn.v)); lastBtn=null; }
+            if(parts.length===0) return;
+            var act=f.getAttribute('action')||location.pathname+location.search;
+            sessionStorage.setItem('utatarRecPost', JSON.stringify({url:String(act), body:parts.join('&'), page:String(location.href)}));
+            sessionStorage.setItem('utatarRecArm','0');
+          }catch(e3){}
+        }, true);
+      }catch(e){}
+    })();
+    """
+
+    /// تُسلّح التسجيل: أي فورم المستخدم يضغطها بعد كده تتسجل (بس مرة واحدة)
+    static let armRecordingJS = """
+    (function(){ try{
+      sessionStorage.removeItem('utatarRecPost');
+      sessionStorage.setItem('utatarRecArm','1');
+      sessionStorage.setItem('utatarRecArmAt', String(Date.now()));
+      return JSON.stringify({ok:true});
+    }catch(e){ return JSON.stringify({ok:false,message:String(e)}); } })();
+    """
+
+    static let stopRecordingJS = """
+    (function(){ try{ sessionStorage.setItem('utatarRecArm','0'); return JSON.stringify({ok:true}); }catch(e){ return JSON.stringify({ok:false}); } })();
+    """
+
+    /// بيقرا ويستهلك الضغطة المسجلة
+    static let readRecordingJS = """
+    (function(){ try{
+      var raw=sessionStorage.getItem('utatarRecPost');
+      if(!raw) return JSON.stringify({has:false});
+      sessionStorage.removeItem('utatarRecPost');
+      var o=JSON.parse(raw);
+      return JSON.stringify({has:true,url:String(o.url||''),body:String(o.body||''),page:String(o.page||'')});
+    }catch(e){ return JSON.stringify({has:false}); } })();
+    """
+
+    func armRecording(completion: @escaping (Bool) -> Void) {
+        runJSON(Self.armRecordingJS) { obj in completion(((obj?["ok"] as? Bool) ?? false)) }
+    }
+
+    func stopRecording() {
+        runJSON(Self.stopRecordingJS) { _ in }
+    }
+
+    func readRecording(completion: @escaping ([String: String]?) -> Void) {
+        runJSON(Self.readRecordingJS) { obj in
+            guard let obj = obj, (obj["has"] as? Bool) == true else { completion(nil); return }
+            completion(["url": obj["url"] as? String ?? "", "body": obj["body"] as? String ?? "", "page": obj["page"] as? String ?? ""])
+        }
+    }
+
+    /// إعادة ضغطة مسجلة عامة (النهب المثلًا): نفس الرابط ونفس الحقول بالظبط — fetch مباشر من أي صفحة
+    /// من غير ما نفتح أي حاجة. الطلب بيروح لنفس action اللي المتصفح باعتها وإيد المستخدم — مفيش خطر لوج آوت.
+    static func kickReplayPostJS(savedUrl: String, savedBody: String) -> String {
+        return """
+        (function(){
+          try{
+            window.__utatarFetchTrain='pending';
+            var u='\(savedUrl)';
+            var full=u.indexOf('http')===0?u:('https://utatar.com/'+u.replace(/^\\//,''));
+            return fetch(full,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'\(savedBody)'})
+              .then(function(r){ return r.text().then(function(t){
+                var loggedOut=(String(r.url).indexOf('login')>=0);
+                window.__utatarFetchTrain=JSON.stringify({ok:(r.ok===true && !loggedOut),message:loggedOut?'الخادم رجع صفحة لوجين':('ضغطفك المسجلة انبعتت ✅ ('+t.length+' حرف)')});
+              }); })
+              .catch(function(e){ window.__utatarFetchTrain=JSON.stringify({ok:false,message:'فشل: '+e.message}); });
+          }catch(e){ try{ window.__utatarFetchTrain=JSON.stringify({ok:false,message:e.message}); }catch(e2){} }
+        })();
+        """
+    }
+
+    func replayRecordedPost(saved: [String: String], completion: @escaping (Bool, String) -> Void) {
+        runJSON(Self.kickReplayPostJS(savedUrl: saved["url"] ?? "", savedBody: saved["body"] ?? "")) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
+                guard let self = self else { return }
+                self.runJSON(Self.fetchTrainResultJS) { obj in
+                    let state = (obj?["state"] as? String) ?? "pending"
+                    if state == "pending" || state.isEmpty {
+                        completion(false, "__pending__")
+                        return
+                    }
+                    completion(((obj?["ok"] as? Bool) ?? false), obj?["message"] as? String ?? "مفيش رد")
+                }
+            }
+        }
     }
 
     /// بيقري ويستهلك الضغطة المسجلة (sessionStorage بينتقل بين الصفحات)

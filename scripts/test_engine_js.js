@@ -128,6 +128,8 @@ const document = {
   title: 'عصر التتار5',
   body: null,
   documentElement: { scrollTop: 0 },
+  _listeners: [],
+  addEventListener(type, fn) { this._listeners.push({ type, fn }); },
   createElement: tag => t(tag, {}),   // created elements auto-register globally (H)
   querySelector: s => H.querySelector(s),
   querySelectorAll: s => {
@@ -143,6 +145,19 @@ function t(tag, attrs = {}, children = [], text = "") {
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// sessionStorage shim (recorder hook persists arm/post across pages)
+const _store = {};
+const sessionStorage = {
+  setItem: (k, v) => { _store[k] = String(v); },
+  getItem: k => (k in _store ? _store[k] : null),
+  removeItem: k => { delete _store[k]; },
+};
+const fire = (type, target) => {
+  const ev = new Event(type);
+  ev.target = target;
+  document._listeners.filter(l => l.type === type).forEach(l => l.fn(ev));
+};
 
 // --- Browser globals the scripts rely on ---
 class Event { constructor(type, opts) { this.type = type; this.bubbles = !!(opts && opts.bubbles); } }
@@ -460,6 +475,50 @@ setTimeout(async () => {
 
   // hook: serialization logic sanity (pure function part)
   console.log('ALL SUBMIT-REPLAY TESTS DONE');
+
+  // ==== RECORDER (التسجيل باختيارات): a2b retreat form + farm startRaid form ====
+  eval(extractFunc('recSubmitHookJS'));
+  const a2bForm = t('form', { action: 'a2b.php' }, [
+    t('input', { type: 'hidden', name: 'timestamp', value: '1725270000' }),
+    t('input', { type: 'hidden', name: 'timestamp_checksum', value: 'abc123' }),
+    t('input', { type: 'text', name: 'x', value: '10' }),
+    t('input', { type: 'text', name: 'y', value: '20' }),
+    t('input', { type: 'radio', name: 'c', value: '2' }),
+    t('input', { type: 'radio', name: 'c', value: '4' }),
+    t('input', { type: 'text', name: 't14', value: '5' }),
+    t('input', { type: 'submit', name: 's1', value: 'ok' }),
+  ]);
+  a2bForm.querySelectorAll('input[name="c"]')[1].checked = true;  // c=4 نهب
+  sessionStorage.setItem('utatarRecArm', '1');
+  sessionStorage.setItem('utatarRecArmAt', String(Date.now()));
+  fire('click', a2bForm.querySelector('input[name="s1"]'));
+  fire('submit', a2bForm);
+  const recRaw = sessionStorage.getItem('utatarRecPost');
+  if (!recRaw) throw new Error('FAIL recorder: retreat submit not captured');
+  const rec = JSON.parse(recRaw);
+  if (rec.url !== 'a2b.php') throw new Error('FAIL recorder url: ' + rec.url);
+  for (const piece of ['x=10', 'y=20', 'c=4', 't14=5', 's1=ok', 'timestamp_checksum=abc123']) {
+    if (rec.body.indexOf(piece) < 0) throw new Error('FAIL recorder body missing ' + piece + ' in ' + rec.body);
+  }
+  if (rec.body.indexOf('c=2') >= 0) throw new Error('FAIL recorder captured unchecked radio');
+  if (sessionStorage.getItem('utatarRecArm') !== '0') throw new Error('FAIL recorder arm not consumed');
+  const rr = JSON.parse(eval(extractFunc('readRecordingJS')));
+  if (rr.has !== true || rr.body !== rec.body) throw new Error('FAIL readRecording: ' + JSON.stringify(rr));
+  const rr2 = JSON.parse(eval(extractFunc('readRecordingJS')));
+  if (rr2.has !== false) throw new Error('FAIL recording not consumed');
+  // farm form recording (no submit button click — hidden fields only)
+  sessionStorage.setItem('utatarRecArm', '1');
+  fire('submit', farmForm);
+  const fr = JSON.parse(sessionStorage.getItem('utatarRecPost'));
+  for (const piece of ['action=startRaid', 'a=c35', 'lid=7', 'tribe=2', 'slot101=']) {
+    if (fr.body.indexOf(piece) < 0) throw new Error('FAIL farm rec body missing ' + piece + ' in ' + fr.body);
+  }
+  // unarmed submits are ignored
+  sessionStorage.removeItem('utatarRecPost');
+  sessionStorage.setItem('utatarRecArm', '0');
+  fire('submit', a2bForm);
+  if (sessionStorage.getItem('utatarRecPost')) throw new Error('FAIL recorder captured while unarmed');
+  console.log('RECORDER ✓ (retreat a2b with x/y/c=4/s1 + farm startRaid; arm consumed; unarmed ignored)');
 
   console.log('\nALL JS TESTS PASSED ✅');
 }, 4600);

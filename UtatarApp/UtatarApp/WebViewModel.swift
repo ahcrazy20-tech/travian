@@ -83,6 +83,71 @@ class WebViewModel: NSObject, ObservableObject {
     private var lastAlertNotifyAt = Date.distantPast
     /// بعد إطلاق هروب: نستنى 10 دقايق قبل هروب تاني (علامة att1 بتفضل ظاهرة طول ما الهجوم في السكة)
     private var lastRetreatAt = Date.distantPast
+
+    // MARK: - التسجيل باختيارات: 🔴 سجّل هروب / 🔴 سجّل نهب → تعملها بإيدك مرة → البوت يعيدها
+    @Published var recordingMode: String? = nil   // "farm" أو "retreat" — شغال دلوقتي؟
+    var farmRecording: [String: String] { (UD.dictionary(forKey: "farmRecording") as? [String: String]) ?? [:] }
+    var retreatRecording: [String: String] { (UD.dictionary(forKey: "retreatRecording") as? [String: String]) ?? [:] }
+
+    /// 🔴 بدء تسجيل: أي فورم المستخدم يضغطها بعد كده تتسجل مرة واحدة
+    func armRecording(_ mode: String) {
+        engine.armRecording { [weak self] ok in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if !ok {
+                    self.logActivity("❌ مقدرتش أسلّح التسجيل — جرب تاني")
+                    return
+                }
+                self.recordingMode = mode
+                if mode == "farm" {
+                    self.logActivity("🎬 التسجيل اشتغل: افتح قايمة النهب زي ما بتعمل عادي وعلّم الهدافين واضغط الإطلاق — البوت هيسجل الضغطة دي ويعيدها لوحده كل فترة")
+                } else {
+                    self.logActivity("🎬 التسجيل اشتغل: اعمل الهروب بإيدك مرة واحدة (نقطة التجمع ← علّم الكل ← نهب ← إحداثيات الواحة ← موافق) — البوت هيسجله ويكرره لوحده لما يرصد هجوم")
+                }
+            }
+        }
+    }
+
+    /// ⏹ إيقاف التسجيل من غير ما يسجل حاجة
+    func stopRecording() {
+        recordingMode = nil
+        engine.stopRecording()
+        logActivity("⏹ وقّفت التسجيل")
+    }
+
+    /// قراية أي ضغطة المستخدم سجلها للتوك — نندها بعد تحميل أي صفحة وفي الدورة
+    private func checkRecording() {
+        guard recordingMode != nil else { return }
+        engine.readRecording { [weak self] rec in
+            guard let self = self, let rec = rec, !rec["body", default: ""].isEmpty else { return }
+            DispatchQueue.main.async {
+                let mode = self.recordingMode ?? "farm"
+                self.recordingMode = nil
+                let save = ["url": rec["url"] ?? "", "body": rec["body"] ?? ""]
+                if mode == "farm" {
+                    UD.set(save, forKey: "farmRecording")
+                    self.nextFarmAt = Date().addingTimeInterval(60)  // أقرب فرصة يطلق الضغطة المسجلة
+                    self.logActivity("✅ سجلت ضغطة النهب بتاعتك! من دلوقتي هيطلقها لوحده كل \(self.farmIntervalMin) دقيقة من غير ما يفتح أي صفحة (حتى مش قايمة النهب)")
+                } else {
+                    UD.set(save, forKey: "retreatRecording")
+                    let x = self.bodyParam(save["body"] ?? "", "x")
+                    let y = self.bodyParam(save["body"] ?? "", "y")
+                    let c = self.bodyParam(save["body"] ?? "", "c")
+                    let w = c == "2" ? "تعزيز" : (c == "3" ? "هجوم" : "نهب")
+                    self.logActivity("✅ سجلت الهروب بتاعك لـ (\(x)|\(y)) بوضع \(w) — لما يرصد هجوم هيكرر نفس ضغطفك بجنود القرية الموجودين فعلاً")
+                }
+            }
+        }
+    }
+
+    /// قراية متغير من جسم POST المُشفّر (x=..&y=..)
+    private func bodyParam(_ body: String, _ key: String) -> String {
+        for kv in body.split(separator: "&") {
+            let p = kv.split(separator: "=", maxSplits: 1).map(String.init)
+            if p.count == 2, p[0] == key { return p[1] }
+        }
+        return "?"
+    }
     /// أدق مهمة تدريب معلقة — النظام عمره ما ينسى التدريب حتى مع فترات الهدوء
     private func ensureTrainQueued(withinMinutes mi: Int) {
         let next = Date().addingTimeInterval(TimeInterval(mi * 60))
@@ -286,14 +351,37 @@ class WebViewModel: NSObject, ObservableObject {
             }
             return
         }
+        // الأضمن: الضغطة المسجلة بإيد المستخدم — fetch مباشر من أي صفحة، مفيش أي تنقل خالص
+        let rec = farmRecording
+        if !rec.isEmpty {
+            doFarmReplay()
+            return
+        }
         if pageKind == "farmlist" {
             doFarmLaunch()
         } else {
-            // نحتاج صفحة قايمة النهب — ندخل عليها بنفسنا (مرة كل فترة، مش رفرش مستمر)
+            // مفيش تسجيل — نجرب نقطة التجمع نفسها (gid=16 زي رابط "نسخ الكل" في محرك اللعبة)
             farmInfoShown = false
-            logActivity("🏴 ماشي لقايمة النهب عشان نطلق الهجمة...")
-            // عنوان سيرفرك الحقيقي من تسجيل صفحاتك: bid=17 (نقطة التجمع) + t=4 (قايمة النهب)
-            navigate(path: "build?bid=17&t=4")
+            logActivity("🏴 ماشي لقايمة النهب عشان نطلق الهجمة... (نصيحة: سجّل النهب بإيدك مرة — الأضمن بكتير)")
+            navigate(path: "build.php?gid=16&t=99")
+        }
+    }
+
+    /// إطلاق الضغطة المسجلة (نفس action المستخدم) — من أي صفحة، بدون تنقل
+    private func doFarmReplay() {
+        engine.replayRecordedPost(saved: farmRecording) { [weak self] ok, msg in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if msg == "__pending__" { return }
+                if ok {
+                    self.markSubmitBusy()
+                    self.nextFarmAt = Date().addingTimeInterval(TimeInterval(self.farmIntervalMin * 60))
+                    self.logActivity("🏴 \(msg) — الجاية بعد \(self.farmIntervalMin) دقيقة ✅")
+                } else {
+                    self.nextFarmAt = Date().addingTimeInterval(300)
+                    self.logActivity("⚠️ إعادة الضغطة المسجلة فشلت (\(msg)) — هجرب تاني بعد 5 دقايق (لو فضلت فاشلة: أعد تسجيل النهب)")
+                }
+            }
         }
     }
 
@@ -317,8 +405,13 @@ class WebViewModel: NSObject, ObservableObject {
 
     /// 🏴 إطلاق فوري (زرار التجربة)
     func testFarmLaunch() {
+        if !farmRecording.isEmpty {
+            logActivity("🏴 هطلق ضغطفك المسجلة حالاً (من غير ما أفتح أي صفحة)...")
+            doFarmReplay()
+            return
+        }
         guard pageKind == "farmlist" else {
-            logActivity("🏴 افتح قايمة النهب الأول (نقطة التجمع ← قايمة النهب) وبعدها دوس الزرار")
+            logActivity("🏴 افتح قايمة النهب الأول (نقطة التجمع ← قايمة النهب) وبعدها دوس الزرار — أو الأحسن: سجّل النهب بإيدك مرة وأبشر")
             return
         }
         doFarmLaunch()
@@ -492,19 +585,35 @@ class WebViewModel: NSObject, ObservableObject {
     }
 
     /// الهروب: بكل الجنود لوجهة الهروب (تعزيز).
+    /// هدف الهروب: من ضغطة المستخدم المسجلة (x/y/c) أو الإحداثيات المكتوبة + نهب كوضع افتراضي
+    private var retreatTarget: (Int, Int, Int) {
+        let rec = retreatRecording
+        if !rec.isEmpty {
+            let x = Int(bodyParam(rec["body"] ?? "", "x")) ?? 0
+            let y = Int(bodyParam(rec["body"] ?? "", "y")) ?? 0
+            let c = bodyParam(rec["body"] ?? "", "c")
+            // من محرك اللعبة: c=2 تعزيز — c=3 هجوم — c=4 نهب → أرقام sendTroops: 1/2/3
+            let mode = c == "2" ? 1 : (c == "3" ? 2 : 3)
+            if x != 0 || y != 0 { return (x, y, mode) }
+        }
+        return (retreatX, retreatY, 3)  // نهب — زي ما طلبت: الخيار هجوم للنهب
+    }
+
     func startRetreat(auto: Bool) {
         let troops = homeTroops.filter { $0.count > 0 }
         guard !troops.isEmpty else {
             logActivity("❌ الهروب: مفيش جنود موجودين حالياً (كل اللي عندك في سكة) — أو لازم تفتح القرية الأول عشان أقرا الجنود")
             return
         }
-        guard retreatX != 0 || retreatY != 0 else {
-            logActivity("❌ الهروب: سجّل إحداثيات واحة الهروب الأول")
+        let (tx, ty, tmode) = retreatTarget
+        guard tx != 0 || ty != 0 else {
+            logActivity("❌ الهروب: سجّل الهروب بإيدك مرة (الزرار الأحمر) أو اكتب إحداثيات واحة الهروب")
             return
         }
         pendingAction = .retreat
         actionStartedAt = Date()
-        logActivity(auto ? "🏃 إنذار! بجهز الهروب بكل الجنود لـ (\(retreatX)|\(retreatY))..." : "🏃 تجهيز هروب تجريبي...")
+        let modeName = tmode == 3 ? "نهب" : (tmode == 2 ? "هجوم" : "تعزيز")
+        logActivity(auto ? "🏃 إنذار! بجهز الهروب بكل الجنود لـ (\(tx)|\(ty)) بوضع \(modeName)..." : "🏃 تجهيز هروب تجريبي لـ (\(tx)|\(ty)) بوضع \(modeName)...")
         navigateToRallyPoint()
     }
 
@@ -520,8 +629,9 @@ class WebViewModel: NSObject, ObservableObject {
         refreshGameData()
         advancePendingAction()
         recordCurrentPageIfNeeded()
-        // خطاف تسجيل ضغطة التدريب + قراية أي ضغطة جديدة سجلها المستخدم
+        // خطافات التسجيل (تدريب + المسجل العام) + قراية أي ضغطة المستخدم سجلها للتو
         engine.installTrainSubmitHook()
+        checkRecording()
         engine.readTrainPost { [weak self] post in
             guard let self = self, let post = post, !post["body", default: ""].isEmpty else { return }
             DispatchQueue.main.async {
@@ -649,10 +759,11 @@ class WebViewModel: NSObject, ObservableObject {
                 logActivity("❌ الهروب اتلغي: القرية فاضية (الجنود كلها في سكة)")
                 return
             }
+            let (sx, sy, smode) = retreatTarget
             logActivity("🏃 ببعت \(pairs.map { "\($0.1)×u\($0.0)" }.joined(separator: " + "))...")
-            engine.sendTroops(x: retreatX, y: retreatY, units: pairs, mode: 1) { [weak self] ok, msg in
+            engine.sendTroops(x: sx, y: sy, units: pairs, mode: smode) { [weak self] ok, msg in
                 DispatchQueue.main.async {
-                    self?.logActivity(ok ? "🏃 \(msg) — الهروب انطلق لـ (\(self?.retreatX ?? 0)|\(self?.retreatY ?? 0))" : "❌ الهروب فشل: \(msg)")
+                    self?.logActivity(ok ? "🏃 \(msg) — الهروب انطلق لـ (\(sx)|\(sy))" : "❌ الهروب فشل: \(msg)")
                     if ok {
                         self?.sendNotification(title: "🏃 هروب", body: "الجنود في الطريق لوجهة الهروب")
                     }
