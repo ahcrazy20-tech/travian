@@ -394,6 +394,172 @@ final class GameEngine: NSObject {
     }
 
     /// يدرّب كل نوع بالعدد الأقصى المسموح (يستخدم قيم max الحقيقية من الصفحة).
+    // MARK: - تسجيل ضغطة التدريب اليدوية وإعادتها (أضمن طريقة: نفس الحقول اللي نجحت بالظبط)
+
+    /// بيتسطب على كل صفحة: أول ما تدوس "تدريب" بنفسك، بيحفظ الطلب الكامل في sessionStorage
+    /// (بينتقل مع الصفحة) — والتطبيق بيقراه ويحفظه، وبعدين بيعيد نفس الضغطة أوتوماتك.
+    static let trainSubmitHookJS = """
+    (function(){
+      try{
+        if(window.__utatarHook) return;
+        window.__utatarHook=true;
+        document.addEventListener('submit', function(ev){
+          try{
+            var f=ev.target; if(!f||!f.querySelectorAll) return;
+            if(f.querySelector('input[name="x"],input[name="y"]')) return;
+            var els=f.querySelectorAll('input,button');
+            var parts=[];
+            for(var i=0;i<els.length;i++){
+              var e2=els[i]; var nm=e2.getAttribute('name'); if(!nm) continue;
+              var ty=(e2.getAttribute('type')||'').toLowerCase();
+              if(ty==='submit') continue;
+              if(ty==='radio' && !e2.checked) continue;
+              if(ty==='checkbox' && !e2.checked) continue;
+              parts.push(encodeURIComponent(nm)+'='+encodeURIComponent(e2.value||''));
+            }
+            if(parts.length===0) return;
+            var act=f.getAttribute('action')||location.pathname+location.search;
+            try{ sessionStorage.setItem('utatarTrainPost', JSON.stringify({url:String(act), body:parts.join('&')})); }catch(e2){}
+          }catch(e3){}
+        }, true);
+      }catch(e){}
+    })();
+    """
+
+    func installTrainSubmitHook() {
+        runJSON(Self.trainSubmitHookJS) { _ in }
+    }
+
+    /// بيقري ويستهلك الضغطة المسجلة (sessionStorage بينتقل بين الصفحات)
+    func readTrainPost(completion: @escaping ([String: String]?) -> Void) {
+        runJSON(Self.readTrainPostJS) { obj in
+            guard let obj = obj, (obj["has"] as? Bool) == true else { completion(nil); return }
+            completion(["url": obj["url"] as? String ?? "", "body": obj["body"] as? String ?? ""])
+        }
+    }
+
+    static let readTrainPostJS = """
+    (function(){ try{
+      var raw=sessionStorage.getItem('utatarTrainPost');
+      if(!raw) return JSON.stringify({has:false});
+      sessionStorage.removeItem('utatarTrainPost');
+      var o=JSON.parse(raw);
+      return JSON.stringify({has:true,url:String(o.url||''),body:String(o.body||'')});
+    }catch(e){ return JSON.stringify({has:false}); } })();
+    """
+
+    /// إعادة الضغطة المسجلة: نفس الحقول بالظبط + قص المبالغ على الحد الحقيقي (الخادم بيرفض الزيادة كله!)
+    func trainReplay(saved: [String: String], pairs: [(Int, Int)], completion: @escaping (Bool, String) -> Void) {
+        var arr = "["
+        for (i, p) in pairs.enumerated() {
+            arr += "[\(p.0),\(p.1)]"
+            if i < pairs.count - 1 { arr += "," }
+        }
+        arr += "]"
+        runJSON(Self.kickReplayTrainJS(savedUrl: saved["url"] ?? "", savedBody: saved["body"] ?? "", pairs: arr)) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
+                guard let self = self else { return }
+                self.runJSON(Self.fetchTrainResultJS) { obj in
+                    let state = (obj?["state"] as? String) ?? "pending"
+                    if state == "pending" || state.isEmpty {
+                        completion(false, "__pending__")
+                        return
+                    }
+                    completion(((obj?["ok"] as? Bool) ?? false), obj?["message"] as? String ?? "مفيش رد")
+                }
+            }
+        }
+    }
+
+    static func kickReplayTrainJS(savedUrl: String, savedBody: String, pairs: String) -> String {
+        return """
+        (function(){
+          try{
+            window.__utatarFetchTrain='pending';
+            var savedUrl='\(savedUrl)';
+            var savedBody='\(savedBody)';
+            var pairs=\(pairs);
+            // رقم المبنى: من رابط الفورم أو من حقل id جوه الطلب المسجل
+            var id='';
+            var qs=savedUrl.split('?')[1]||'';
+            var ps=qs.split('&');
+            for(var i=0;i<ps.length;i++){ var kv=ps[i].split('='); if(kv[0]==='id') id=kv[1]||''; }
+            if(!id){
+              var ps2=savedBody.split('&');
+              for(var j=0;j<ps2.length;j++){ var kv2=ps2[j].split('='); if(decodeURIComponent(kv2[0])==='id') id=decodeURIComponent(kv2[1]||''); }
+            }
+            if(!id){ window.__utatarFetchTrain=JSON.stringify({ok:false,message:'الضغطة المسجلة مفيهاش رقم المبنى'}); return; }
+            fetch('build.php?id='+id,{credentials:'same-origin'}).then(function(r){return r.text();}).then(function(html2){
+              var html=String(html2).replace(/&quot;/g,'"').replace(/&#0?39;/g,"'").replace(/&amp;/g,'&');
+              function capFor(uid){
+                var names=['tf['+uid+']','t'+uid,'t['+uid+']','tf'+uid];
+                for(var ni=0;ni<names.length;ni++){
+                  var at=html.indexOf('name="'+names[ni]+'"');
+                  if(at<0) at=html.indexOf("name='"+names[ni]+"'");
+                  if(at<0) continue;
+                  var seg=html.substring(at,at+1000);
+                  var best=0;
+                  var ma=seg.match(/max=["']([0-9][0-9,]*)/);
+                  if(ma) best=parseInt(ma[1].replace(/,/g,''),10)||0;
+                  var mo=seg.match(/value\\s*=\\s*["']?\\s*([0-9][0-9,]*)/);
+                  if(mo){ var v=parseInt(mo[1].replace(/,/g,''),10)||0; if(v>best) best=v; }
+                  if(best>0) return best;
+                  var mn=seg.match(/>\\s*([0-9][0-9,]{2,})\\s*</);
+                  if(mn){ var v2=parseInt(mn[1].replace(/,/g,''),10)||0; if(v2>0) return v2; }
+                  return 0;
+                }
+                return -1;
+              }
+              // الحد لكل نوع مطلوب: صفر/مجهول = ممنوع يتبعت (الخادم بيرفض الزيادة ويحذف النوع)
+              var caps={};
+              pairs.forEach(function(p){ caps[p[0]]=capFor(p[0]); });
+              var parts=savedBody.split('&');
+              var out=[], sent=[], skipped=[];
+              var seen={};
+              parts.forEach(function(kv){
+                if(!kv) return;
+                var i2=kv.indexOf('=');
+                var k=decodeURIComponent(i2<0?kv:kv.substring(0,i2));
+                if(k==='id'||k==='ft'||k==='s1'){ out.push(kv); return; }
+                var digits=k.replace(/[^0-9]/g,'');
+                var uid=parseInt(digits,10);
+                if(uid>0 && caps.hasOwnProperty(uid)){
+                  seen[uid]=true;
+                  var c=caps[uid];
+                  var want=pairs.filter(function(pp){return pp[0]===uid;})[0][1];
+                  if(c===0){ skipped.push('u'+uid); return; }   // اللعبة بتقول صفر
+                  // حد معروف: نقصّ. حد مجهول: نبععت المطلوب والخادم بيرفض النوع ده لوحده بس
+                  var v=(c>0&&c<want)?want-want+Math.min(want,c):want;
+                  out.push(encodeURIComponent(k)+'='+v);
+                  sent.push('u'+uid+'='+v+(c>0?'/'+c:'?'));
+                } else {
+                  out.push(kv);
+                }
+              });
+              // أنواع مطلوبة مش في الضغطة الأصلية (زي الإسطبل): نضيفهم بنفس شكل tf[..] اللي شغال
+              pairs.forEach(function(p){
+                if(seen[p[0]]) return;
+                var c=caps[p[0]];
+                if(c===0){ skipped.push('u'+p[0]); return; }
+                var v=(c>0&&c<p[1])?c:p[1];
+                out.push('tf%5B'+p[0]+'%5D='+v);
+                sent.push('u'+p[0]+'='+v+(c>0?'/'+c:'?'));
+              });
+              if(sent.length===0){
+                window.__utatarFetchTrain=JSON.stringify({ok:false,message:'الحدود صفر أو مش معروفة ('+skipped.join(',')+') — صفحة:'+String(html2).length+'حرف'});
+                return;
+              }
+              return fetch(savedUrl,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:out.join('&')})
+                .then(function(r2){
+                  var extra=skipped.length?(' — تخطّيت '+skipped.join(',')):'';
+                  window.__utatarFetchTrain=JSON.stringify({ok:(r2.ok===true),message:'إعادة ضغطتك المسجلة ('+sent.join(', ')+')'+extra+(r2.redirected?' ✅':''),status:r2.status});
+                });
+            }).catch(function(e){ window.__utatarFetchTrain=JSON.stringify({ok:false,message:'فشل: '+e.message}); });
+          }catch(e){ try{ window.__utatarFetchTrain=JSON.stringify({ok:false,message:e.message}); }catch(e2){} }
+        })();
+        """
+    }
+
     // MARK: - التدريب المخفي (fetch): بيستدعي الخادم مباشرة من أي صفحة — من غير ما نفتح الثكنة أو ننقل!
 
     /// بيقرا حدود الموارد من صفحة الثكنة (fetch مخفي) وبعدين يبعت طلب التدريب مباشرة.
@@ -455,18 +621,20 @@ final class GameEngine: NSObject {
                 }
                 return -1;      // الحقل مش في الصفحة خالص
               }
+              // الخادم بيرفض أي مقدار أكبر من الحد (بيحذفه) — فالمجهول بنتجنبه، مش نبعته
+              // حد معروف → نقصّ. حد مجهول → نبعت المطلوب (الخادم بيرفض النوع الوحيد بس). حد صفر → تخطّي.
               var body=[], sent=[], zeros=0;
               pairs.forEach(function(p){
                 var uid=p[0], want=p[1];
                 var c=capFor(uid);
-                if(c===0){ zeros++; return; }        // اللعبة بتقول صفر → متبعتش
-                var v=(c>0&&c<want)?c:want;          // قصّ على الحد، أو ابعت المطلوب والخادم هيقيد
+                if(c===0){ zeros++; return; }
+                var v=(c>0&&c<want)?c:want;
                 body.push('t'+uid+'='+v);
                 body.push('tf%5B'+uid+'%5D='+v);
-                sent.push('u'+uid+'='+v+(c>0?'/'+c:''));
+                sent.push('u'+uid+'='+v+(c>0?'/'+c:'?'));
               });
               if(body.length===0){
-                window.__utatarFetchTrain=JSON.stringify({ok:false,message: zeros>0 ? 'الموارد مش كفاية لتدريب أي نوع دلوقتي (الحد=0)' : 'ملقتش حقول التدريب في صفحة الثكنة'});
+                window.__utatarFetchTrain=JSON.stringify({ok:false,message:'الحد صفر لكل الأنواع المطلوبة (موارد مش كفاية) — جرب تاني بعد ما الموارد تزيد'});
                 return;
               }
               body.push('id='+id); body.push('ft=t1'); body.push('s1=ok');
@@ -1067,16 +1235,21 @@ final class GameEngine: NSObject {
           if(els.length>0){ incoming=true; hits.push(sel+' x'+els.length); }
         }catch(e){}
       });
-      // بدائل عامة (لو النسخة معدلة): عناصر تحذير معروفة
-      var sels=['[class*="incoming"]','[class*="attack_warn"]','img[src*="alarm"]','[id*="alarm"]','img[src*="warn"]'];
+      // نص صندوق التحركات نفسه (أضمن): كلمة "هجوم" جوه صندوق التحركات = هجوم قادم فعلاً
+      try{
+        var mv=document.querySelector('.movements, table[id="movements"]');
+        if(mv){
+          var t=(mv.textContent||'').replace(/\\s+/g,' ');
+          if(mv.querySelector('img.att1, img.att2, .a1, .a2')){ incoming=true; }
+          else if(t.indexOf('هجوم')>=0){ incoming=true; hits.push('text:هجوم في التحركات'); }
+        }
+      }catch(e5){}
+      // عناصر عامة: للعرض بس — مش بتطلق إنذار لوحدها عشان نمنع الإنذارات الكاذبة
+      var sels=['[class*="incoming"]','[class*="attack_warn"]','img[src*="alarm"]','[id*="alarm"]'];
       sels.forEach(function(sel){
         try{
           var els=document.querySelectorAll(sel);
-          if(els.length>0){
-            var t=(els[0].textContent||'').trim();
-            if(/هجوم|att/i.test(t+' '+sel)) incoming=true;
-            hits.push(sel+' x'+els.length);
-          }
+          if(els.length>0) hits.push(sel+' x'+els.length);
         }catch(e){}
       });
       return JSON.stringify({incoming:incoming,hits:hits});

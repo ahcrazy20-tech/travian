@@ -124,6 +124,9 @@ struct AutomationPanelView: View {
                     // ===== التدريب (أهم كارت — فوق خالص) =====
                     TrainingCard(viewModel: viewModel)
 
+                    // ===== تنبيه الهجوم =====
+                    AttackAlertCard(viewModel: viewModel)
+
                     // ===== الموارد الحقيقية =====
                     VStack(spacing: 16) {
                         RealResourcesCard(viewModel: viewModel)
@@ -355,9 +358,14 @@ struct TrainingCard: View {
                     .frame(width: 60)
             }
 
-            Text("اكتب العدد جنب النوع اللي عايز تدريبه (حتى مليون) — السيب فاضي مش هيتدرب. البوت بيدرب كل فترة بطلب مباشر من غير ما يفتح الثكنة ومن غير أي رفرش")
+            Text("اكتب العدد جنب النوع اللي عايز تدريبه (حتى مليون) — السيب فاضي مش هيتدرب. ولو حابب تتأكد: اضغط «تدريب» داخل اللعبة مرة واحدة — البوت هيسجل ضغفتك ويعيد نفس الطلب كل فترة لوحده")
                 .font(.caption2)
                 .foregroundColor(.yellow.opacity(0.9))
+            if viewModel.lastTrainPost["body"]?.isEmpty == false {
+                Text("✅ ضغفتك مسجلة — البوت بيعيد نفس الطلب أوتوماتك كل فترة")
+                    .font(.caption2)
+                    .foregroundColor(.green)
+            }
 
             HStack(spacing: 8) {
                 Text("يدرب كل:")
@@ -757,6 +765,46 @@ struct DefenseCard: View {
                 .frame(width: 70)
                 .textFieldStyle(.roundedBorder)
                 Spacer()
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - كارت تنبيه الهجوم
+
+struct AttackAlertCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("🚨 تنبيه الهجوم")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                Text(viewModel.alertStatus.isEmpty ? "بيستنى أول فحص..." : viewModel.alertStatus)
+                    .font(.caption2)
+                    .foregroundColor(viewModel.alertStatus.contains("هجوم") ? .red : .green)
+                    .multilineTextAlignment(.trailing)
+            }
+            .padding(.top, 2)
+
+            Text("البوت بيفحص صندوق التحركات كل دورة (30 ثانية) — أول ما يلاقي هجوم جاي يبعتلك إشعار فوري، ولو الهروب مفعّل يبعت كل الجنود لواحة الهروب")
+                .font(.caption2)
+                .foregroundColor(.gray.opacity(0.8))
+
+            Button(action: { viewModel.testAlert() }) {
+                Text("🔔 اختبر التنبيه (إشعار تجريبي)")
+                    .font(.caption2)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color.red.opacity(0.75))
+                    .cornerRadius(6)
             }
         }
         .padding()

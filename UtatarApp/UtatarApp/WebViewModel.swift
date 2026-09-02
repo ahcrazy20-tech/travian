@@ -71,6 +71,11 @@ class WebViewModel: NSObject, ObservableObject {
     private var barracksHintShown = false
     /// أول مرة بنعرف فيها إن الموارد كانت ناقصة (نمنع سبام السجل)
     private var lastShortageLogAt = Date.distantPast
+    /// ضغطة التدريب الحقيقية المسجلة من إيدك — بنعيد نفس الطلب بالظبط كل فترة
+    @Published var lastTrainPost: [String: String] = [:] { didSet { UD.set(lastTrainPost, forKey: "lastTrainPost") } }
+    /// حالة تنبيه الهجوم للعرض المباشر في اللوحة
+    @Published var alertStatus: String = "" { didSet { UD.set(alertStatus, forKey: "alertStatus") } }
+    private var lastAlertNotifyAt = Date.distantPast
     /// أدق مهمة تدريب معلقة — النظام عمره ما ينسى التدريب حتى مع فترات الهدوء
     private func ensureTrainQueued(withinMinutes mi: Int) {
         let next = Date().addingTimeInterval(TimeInterval(mi * 60))
@@ -136,6 +141,8 @@ class WebViewModel: NSObject, ObservableObject {
         pageRecords = UD.string(forKey: "pageRecords") ?? ""
         barracksPath = UD.string(forKey: "barracksPath") ?? ""
         savedTroopTypes = (UD.array(forKey: "savedTroopTypes") as? [[String: Any]]) ?? []
+        lastTrainPost = (UD.dictionary(forKey: "lastTrainPost") as? [String: String]) ?? [:]
+        alertStatus = UD.string(forKey: "alertStatus") ?? ""
         trainIntervalMin = UD.object(forKey: "trainIntervalMin") == nil ? 10 : max(1, UD.integer(forKey: "trainIntervalMin"))
         setupTimer()
         setupLifecycleWatchers()
@@ -244,8 +251,8 @@ class WebViewModel: NSObject, ObservableObject {
             }
             injectAutoTrain()
         }
-        if attackAlerts {
-            checkForAttacks()
+        if attackAlerts || autoRetreatEnabled {
+            checkAlerts()
         }
         if resourceFullAlerts {
             checkResourcesFull()
@@ -453,6 +460,19 @@ class WebViewModel: NSObject, ObservableObject {
         refreshGameData()
         advancePendingAction()
         recordCurrentPageIfNeeded()
+        // خطاف تسجيل ضغطة التدريب + قراية أي ضغطة جديدة سجلها المستخدم
+        engine.installTrainSubmitHook()
+        engine.readTrainPost { [weak self] post in
+            guard let self = self, let post = post, !post["body", default: ""].isEmpty else { return }
+            DispatchQueue.main.async {
+                let changed = self.lastTrainPost["body"] != post["body"]
+                self.lastTrainPost = post
+                if changed {
+                    self.barracksHintShown = false
+                    self.logActivity("✅ سجلت ضغطة التدريب بتاعتك (\(post["url"] ?? "")) — هعيد زيها كل فترة من غير ما تفتح الثكنة")
+                }
+            }
+        }
         // البوت وصل لصفحة مبنية بعد تنقل هو نفسه عمله؟ يدرب حالا (من غير انتظار الفترة)
         if isAutomationEnabled, autoTrainTroops, pendingAction == nil, pageKind == "build",
            Date().timeIntervalSince(lastBotNavAt) < 20 {
@@ -572,17 +592,36 @@ class WebViewModel: NSObject, ObservableObject {
     }
 
     /// فحص إنذار الهجوم (بيشتغل على صفحات القرية بس) + الهروب التلقائي.
-    private func checkAlertAndRetreat() {
-        guard autoRetreatEnabled, pendingAction == nil else { return }
-        guard pageKind == "dorf1" || pageKind == "dorf2" else { return }
+    private func checkAlerts() {
+        guard pendingAction == nil, attackAlerts || autoRetreatEnabled else { return }
         engine.readAlert { [weak self] incoming, hits in
-            guard let self = self, incoming, !hits.isEmpty else { return }
+            guard let self = self else { return }
             DispatchQueue.main.async {
-                guard self.autoRetreatEnabled, self.pendingAction == nil else { return }
-                self.logActivity("🚨 هجوم جاي على القرية! (\(hits.joined(separator: "، "))) — بجهز الهروب")
-                self.startRetreat(auto: true)
+                if incoming {
+                    self.alertStatus = "🚨 هجوم قادم! (\(hits.joined(separator: "، ")))"
+                    // إشعار كل 5 دقايق على الأكثر عشان ميبقاش سبام
+                    if Date().timeIntervalSince(self.lastAlertNotifyAt) > 300 {
+                        self.lastAlertNotifyAt = Date()
+                        self.logActivity("🚨 هجوم جاي على القرية! — راجع صفحة التحركات حالاً")
+                        self.sendNotification(title: "🚨 هجوم قادم!", body: "البوت رصد علامة الهجوم في التحركات — افتح اللعبة حالاً")
+                    }
+                    if self.autoRetreatEnabled, self.pendingAction == nil {
+                        self.logActivity("🏃 بجهز الهروب لوجهة الهروب المسجلة...")
+                        self.startRetreat(auto: true)
+                    }
+                } else {
+                    let df = DateFormatter()
+                    df.dateFormat = "HH:mm"
+                    self.alertStatus = "آمن ✅ — آخر فحص \(df.string(from: Date()))"
+                }
             }
         }
+    }
+
+    /// 🔔 اختبار التنبيه: إشعار حقيقي عشان تتأكد إن الإشعارات واصلة لموبايلك
+    func testAlert() {
+        logActivity("🔔 اختبار تنبيه — لو الإشعار ظهر فوق يبقى كل حاجة تمام")
+        sendNotification(title: "🔔 تنبيه تجريبي", body: "لو شايف الإشعار ده يبقى تنبيه الهجوم هيوصلك وقت الخطر")
     }
 
     /// تجسس بالإحداثيات المكتوبة يدوياً في الكارت.
@@ -870,7 +909,12 @@ class WebViewModel: NSObject, ObservableObject {
                 }
             }
         } else if let fetchPairs = fetchPairs {
-            engine.trainViaFetch(barracksPath: barracksPath, pairs: fetchPairs, completion: handler)
+            // الأفضل: إعادة ضغطة المستخدم المسجلة (نفس الحقول اللي نجحت بالظبط)
+            if let saved = lastTrainPost, !saved["body", default: ""].isEmpty {
+                engine.trainReplay(saved: saved, pairs: fetchPairs, completion: handler)
+            } else {
+                engine.trainViaFetch(barracksPath: barracksPath, pairs: fetchPairs, completion: handler)
+            }
         }
     }
 
@@ -886,21 +930,27 @@ class WebViewModel: NSObject, ObservableObject {
 
     private func captureTroopTypes(_ units: [TrainableUnit]) {
         guard !units.isEmpty else { return }
-        let newIds = Set(units.map { $0.id })
+        // دمج مش استبدال: الثكنة + الإسطبل + الورشة كلهم يتراكموا مع بعض
+        var byId: [String: TrainableUnit] = [:]
+        for u in Self.decodeUnits(savedTroopTypes) { byId[u.id] = u }
+        for u in units { byId[u.id] = u }
+        let merged = byId.values.sorted { $0.unitId < $1.unitId }
         let oldIds = Set(savedTroopTypes.compactMap { $0["id"] as? String })
+        let newIds = Set(merged.map { $0.id })
         guard newIds != oldIds else { return }
-        savedTroopTypes = Self.encodeUnits(units)
-        logActivity("🎒 لقطت \(units.count) نوع جنود وحفظتهم دايمًا — تقدر تحدد اللي تحبه وتكتب العدد")
+        savedTroopTypes = Self.encodeUnits(merged)
+        logActivity("🎒 حفظت \(merged.count) نوع جنود (ثكنة+إسطبل مجتمعين) — تقدر تحدد اللي تحبه وتكتب العدد")
     }
 
     private static func encodeUnits(_ units: [TrainableUnit]) -> [[String: Any]] {
-        units.map { ["id": $0.id, "name": $0.name, "max": $0.max, "costW": $0.costWood, "costC": $0.costClay, "costI": $0.costIron, "costCr": $0.costCrop] as [String: Any] }
+        units.map { ["id": $0.id, "name": $0.name, "uid": $0.unitId, "max": $0.max, "costW": $0.costWood, "costC": $0.costClay, "costI": $0.costIron, "costCr": $0.costCrop] as [String: Any] }
     }
 
     private static func decodeUnits(_ arr: [[String: Any]]) -> [TrainableUnit] {
         arr.compactMap { d in
             guard let id = d["id"] as? String else { return nil }
             var u = TrainableUnit(id: id, name: d["name"] as? String ?? "")
+            u.unitId = d["uid"] as? Int ?? 0
             u.max = d["max"] as? Int ?? 0
             u.costWood = d["costW"] as? Int ?? 0
             u.costClay = d["costC"] as? Int ?? 0

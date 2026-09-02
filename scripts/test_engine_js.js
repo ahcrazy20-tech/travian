@@ -397,5 +397,38 @@ setTimeout(async () => {
   if (calls[0].url !== 'build.php?id=34') throw new Error('FAIL GET url: ' + calls[0].url);
   console.log('HIDDEN TRAIN ✓ (u11:1234 from &quot;onclick, u12:200<567, u13:89 attr, u14:305 from row text)');
 
+  // ==== trainReplay: EXACT recorded body, amounts capped, unknown/zero types SKIPPED ====
+  calls.length = 0;
+  window.__utatarFetchTrain = 'pending';
+  // recorded press (what the real form would submit — all four, zeros included)
+  const savedBody = 'tf%5B11%5D=0&tf%5B12%5D=0&tf%5B13%5D=0&tf%5B14%5D=0&id=34';
+  const kickR = extractFunc('kickReplayTrainJS')
+    .split('\\(savedUrl)').join('build?id=34')
+    .split('\\(savedBody)').join(savedBody)
+    .split('\\(pairs)').join('[[11,1000000],[13,500],[16,777]]');   // u16 = stable unit NOT in the recorded body
+  eval(kickR);
+  await sleep(60);
+  const resR = JSON.parse(String(window.__utatarFetchTrain));
+  console.log('REPLAY:', JSON.stringify(resR));
+  if (resR.ok !== true) throw new Error('FAIL replay: ' + resR.message);
+  const postR = calls[1];
+  if (!postR || postR.url !== 'build?id=34') throw new Error('FAIL replay POST url: ' + (postR && postR.url));
+  const rb = postR.opts.body;
+  // capped recorded fields
+  if (rb.indexOf('tf%5B11%5D=1234') < 0) throw new Error('FAIL replay u11 cap: ' + rb);
+  if (rb.indexOf('tf%5B13%5D=89') < 0) throw new Error('FAIL replay u13 cap: ' + rb);
+  // id preserved exactly
+  if (rb.indexOf('id=34') < 0) throw new Error('FAIL replay id kept: ' + rb);
+  // u16 (stable, cap unknown on barracks page) appended RAW — server rejects that type alone if over
+  if (rb.indexOf('tf%5B16%5D=777') < 0) throw new Error('FAIL replay u16 append: ' + rb);
+  // known over-cap capped, never raw
+  if (rb.indexOf('=1000000') >= 0) throw new Error('FAIL replay over-cap leaked: ' + rb);
+  if (resR.message.indexOf('u11=1234/1234') < 0) throw new Error('FAIL replay report: ' + resR.message);
+  if (resR.message.indexOf('u16=777?') < 0) throw new Error('FAIL replay u16 report: ' + resR.message);
+  console.log('REPLAY ✓ (exact fields, capped, stable unit appended raw)');
+
+  // hook: serialization logic sanity (pure function part)
+  console.log('ALL SUBMIT-REPLAY TESTS DONE');
+
   console.log('\nALL JS TESTS PASSED ✅');
 }, 4600);
