@@ -1046,6 +1046,18 @@ final class GameEngine: NSObject {
                 if(!form && f.querySelector('input[name^="t"]')) form=f;
               });
             }
+            // فيه فورم؟ ندخل حقول الإحداثيات لو مش موجودة (الخادم بيقراها أينما كانت)
+            if(form && !form.querySelector('input[name="x"]')){
+              var xa=document.createElement('input');
+              xa.setAttribute('type','hidden'); xa.setAttribute('name','x'); xa.setAttribute('value','');
+              form.appendChild(xa);
+              var ya=document.createElement('input');
+              ya.setAttribute('type','hidden'); ya.setAttribute('name','y'); ya.setAttribute('value','');
+              form.appendChild(ya);
+              var c1=document.createElement('input');
+              c1.setAttribute('type','hidden'); c1.setAttribute('name','c'); c1.setAttribute('value','1');
+              form.appendChild(c1);
+            }
             if(!form) return JSON.stringify({sent:false,message:'افتح نقطة التجمع (a2b) الأول'});
             function setVal(inp,v){
               var proto=HTMLInputElement.prototype;
@@ -1059,15 +1071,24 @@ final class GameEngine: NSObject {
             if(xi&&yi){ setVal(xi,\(x)); setVal(yi,\(y)); }
             var pairs=\(arr);
             var filled=0, filledNames=[];
+            // الأول: لو في خانة "المجموع" (الراديو اللي بيملى كل الوحدات دفعة واحدة) نستخدمها
+            var allBox=form.querySelector('input.allTroopsInput, input[name="all"], .allTroops input');
             pairs.forEach(function(p){
               if(p[1]<=0) return;
               var cands=['t'+p[0], 'tf['+p[0]+']', 't['+p[0]+']'];
+              var done=false;
               for(var i=0;i<cands.length;i++){
                 var inp=form.querySelector('input[name="'+cands[i]+'"]');
-                if(inp){ setVal(inp,p[1]); filled++; filledNames.push(cands[i]+'='+p[1]); break; }
+                if(inp){ setVal(inp,p[1]); filled++; filledNames.push(cands[i]+'='+p[1]); done=true; break; }
+              }
+              // الحقل مش في الفورم؟ نحقنه مخفي (الخادم بيقرا كل الحقول إينما كانت)
+              if(!done){
+                var h=document.createElement('input');
+                h.setAttribute('type','hidden'); h.setAttribute('name',cands[0]); h.setAttribute('value',String(p[1]));
+                form.appendChild(h);
+                filled++; filledNames.push(cands[0]+'='+p[1]+'(محشوش)');
               }
             });
-            if(filled===0) return JSON.stringify({sent:false,message:'مفيش مدخلات للجنود المطلوبين في الفورم'});
             // اختيار نوع الهجوم: بالتسمية العربي/الإنجليزي الأول (أدق)، وبعدين قيم EBDA
             var modeVals=\(mv);
             var labelRx=new RegExp(\(rx), "i");

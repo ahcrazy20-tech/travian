@@ -285,7 +285,7 @@ xi.value = ''; yi.value = '';
 axeInp.value = ''; scoutInp.value = '';
 const sendJS = extractFunc('sendTroopsJS')
   .split('\\(x)').join('12').split('\\(y)').join('34')
-  .replace('var pairs=\\(arr);', 'var pairs=[[14,3]];')
+  .replace('var pairs=\\(arr);', 'var pairs=[[14,3],[16,5]];')
   .replace('var modeVals=\\(mv);', 'var modeVals=[4,3];')
   .split('\\(rx)').join('"\\u0646\\u0647\\u0628|raid"');
 const scoutRes = JSON.parse(eval(sendJS));
@@ -294,6 +294,10 @@ if (!scoutRes.sent) throw new Error('FAIL scout send: ' + scoutRes.message);
 if (scoutInp.value !== '3') throw new Error('FAIL scout value 3, got ' + scoutInp.value);
 if (axeInp.value) throw new Error('FAIL axe must stay empty');
 if (xi.value !== '12' || yi.value !== '34') throw new Error('FAIL coords not filled: ' + xi.value + ',' + yi.value);
+// unit NOT in the form (u16 حصان) must be INJECTED as hidden t16 — server reads any field anywhere
+const inj = sendForm.children.find(c => c.getAttribute && c.getAttribute('name') === 't16' && c.value === '5');
+if (!inj) throw new Error('FAIL hidden injection t16=5 missing');
+console.log('INJECT ✓ t16=5 hidden field created');
 const radios = sendForm.querySelectorAll('input[name="c"]');
 const raidClicked = radios.find(r => r.clicked);
 if (!raidClicked || raidClicked.getAttribute('value') !== '4') {

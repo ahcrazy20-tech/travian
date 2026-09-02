@@ -393,11 +393,10 @@ class WebViewModel: NSObject, ObservableObject {
         engine.readHomeTroops { [weak self] units in
             guard let self = self else { return }
             DispatchQueue.main.async {
-                let oldCounts = Dictionary(self.homeTroops.map { ($0.id, $0.count) }, uniquingKeysWith: { a, _ in a })
+                // الحقيقة الحقيقية: اللي اللعبة قالت صفر يبقى صفر (اللي مشي مش هيبقى موجود!)
                 self.homeTroops = units.map { u in
                     var u = u
                     if u.name.isEmpty { u.name = GameEngine.arabicUnitName(u.id) }
-                    if u.count == 0, let old = oldCounts[u.id] { u.count = old }
                     return u
                 }
             }
@@ -493,7 +492,7 @@ class WebViewModel: NSObject, ObservableObject {
     func startRetreat(auto: Bool) {
         let troops = homeTroops.filter { $0.count > 0 }
         guard !troops.isEmpty else {
-            logActivity("❌ الهروب: مفيش بيانات جنود — افتح القرية (القرى) الأول")
+            logActivity("❌ الهروب: مفيش جنود موجودين حالياً (كل اللي عندك في سكة) — أو لازم تفتح القرية الأول عشان أقرا الجنود")
             return
         }
         guard retreatX != 0 || retreatY != 0 else {
@@ -642,7 +641,12 @@ class WebViewModel: NSObject, ObservableObject {
             }
         case .retreat:
             pendingAction = nil
-            let pairs = homeTroops.map { ($0.id, $0.count) }
+            let pairs = homeTroops.filter { $0.count > 0 }.map { ($0.id, $0.count) }
+            if pairs.isEmpty {
+                logActivity("❌ الهروب اتلغي: القرية فاضية (الجنود كلها في سكة)")
+                return
+            }
+            logActivity("🏃 ببعت \(pairs.map { "\($0.1)×u\($0.0)" }.joined(separator: " + "))...")
             engine.sendTroops(x: retreatX, y: retreatY, units: pairs, mode: 1) { [weak self] ok, msg in
                 DispatchQueue.main.async {
                     self?.logActivity(ok ? "🏃 \(msg) — الهروب انطلق لـ (\(self?.retreatX ?? 0)|\(self?.retreatY ?? 0))" : "❌ الهروب فشل: \(msg)")
