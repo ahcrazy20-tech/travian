@@ -337,6 +337,51 @@ if (!ft || ft.value !== 't1') throw new Error('FAIL ft=t1 missing');
 if (!idh) throw new Error('FAIL id hidden missing');
 console.log('TRAIN TWINS: t11=500 + ft=t1 + id ✓');
 
+// ==== farmListsJS + launchFarmKickJS: raid list ground truth (farmlist.tpl) ====
+const farmForm = t('form', { action: 'build.php?id=39&t=99&action=startRaid' }, [
+  t('input', { type: 'hidden', name: 'action', value: 'startRaid' }),
+  t('input', { type: 'hidden', name: 'a', value: 'c35' }),
+  t('input', { type: 'hidden', name: 'sort', value: 'distance' }),
+  t('input', { type: 'hidden', name: 'tribe', value: '2' }),
+  t('input', { type: 'hidden', name: 'direction', value: 'asc' }),
+  t('input', { type: 'hidden', name: 'lid', value: '7' }),
+  t('input', { type: 'checkbox', class: 'markSlot', name: 'slot101' }),
+  t('input', { type: 'checkbox', class: 'markSlot', name: 'slot102' }),
+]);
+const farmRow = t('tr', { class: 'slotRow' }, [ farmForm.children[6] ]);
+const fl = JSON.parse(eval(extractFunc('farmListsJS')));
+console.log('FARM LISTS:', JSON.stringify(fl));
+if (fl.lists.length !== 1 || fl.lists[0].lid !== '7' || fl.lists[0].tribe !== '2') throw new Error('FAIL farm list parse: ' + JSON.stringify(fl));
+
+// launch: nothing checked -> bot checks first slot; body serialized exactly
+window.__utatarFetchTrain = 'pending';
+const launchCalls = [];
+const fetch2 = function(url, opts) {
+  launchCalls.push({ url: url, opts: opts || {} });
+  return Promise.resolve({ ok: true, status: 200, redirected: true });
+};
+const realFetch = fetch; const realWindowFetch = window.fetch;
+eval(extractFunc('launchFarmKickJS').split('fetch(').join('fetch2(').split('fetch2.').join('fetch.'));
+setTimeout(() => {}, 0);
+const launchCheck = setInterval(() => {
+  const st = String(window.__utatarFetchTrain);
+  if (st === 'pending') return;
+  clearInterval(launchCheck);
+  const res = JSON.parse(st);
+  console.log('FARM LAUNCH:', JSON.stringify(res));
+  if (res.ok !== true || res.message.indexOf('هدف') < 0) throw new Error('FAIL farm launch: ' + res.message);
+  // بعد الإطلاق السلوتين لازم يكونوا معلّمين (البوت علّم الأول والباقي كانوا معلّمين؟ لا: الاثنين on)
+  const marks2 = farmForm.querySelectorAll('input.markSlot');
+  if (!marks2[0].checked) throw new Error('FAIL farm bot must auto-check the first slot');
+  const post = launchCalls[0];
+  if (!post || post.url.indexOf('build.php?id=39&t=99&action=startRaid') < 0) throw new Error('FAIL farm url: ' + (post && post.url));
+  const b = post.opts.body;
+  for (const piece of ['action=startRaid', 'a=c35', 'lid=7', 'tribe=2', 'slot101=']) {
+    if (b.indexOf(piece) < 0) throw new Error('FAIL farm body missing ' + piece + ' in ' + b);
+  }
+  console.log('FARM LAUNCH ✓ (exact startRaid form, first slot auto-checked)');
+  });
+
 // ==== readVillageInfoJS: parses player/coords from a dorf3-style info page ====
 const vbody = t('body', {}, [
   t('div', {}, [], 'قرية الحصن — اللاعب: قيس السكان: 45 (12|34)'),

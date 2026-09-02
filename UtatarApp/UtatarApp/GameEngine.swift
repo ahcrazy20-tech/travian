@@ -108,6 +108,7 @@ final class GameEngine: NSObject {
         if path.hasPrefix("map") { return "map" }
         if q.contains("d=") { return "villageInfo" }
         if path.hasPrefix("build") {
+            if q.contains("t=99") || q.contains("t=4&") || q.hasSuffix("t=4") { return "farmlist" }
             if q.range(of: #"id=(19|20|21|25|26|29|30)"#, options: .regularExpression) != nil {
                 return "training"
             }
@@ -394,6 +395,107 @@ final class GameEngine: NSObject {
     }
 
     /// يدرّب كل نوع بالعدد الأقصى المسموح (يستخدم قيم max الحقيقية من الصفحة).
+    // MARK: - قائمة النهب (farmlist): قراءة القوائم + إطلاق نهب أوتوماتي
+
+    /// بيقرا قوائم النهب من صفحة نقطة التجمع t=99: اسم القايمة (lid) وعدد الأهداف والمحدد منها.
+    func readFarmLists(completion: @escaping ([[String: Any]]) -> Void) {
+        runJSON(Self.farmListsJS) { obj in
+            completion((obj?["lists"] as? [[String: Any]]) ?? [])
+        }
+    }
+
+    static let farmListsJS = """
+    (function(){
+      try{
+        var forms=document.querySelectorAll('form');
+        var lists=[];
+        forms.forEach(function(f){
+          var act=f.getAttribute('action')||'';
+          var hid=f.querySelector('input[name="action"][value="startRaid"], input[name="action"][value="raidList"], input[name="action"][value="raid_all"]');
+          if(act.indexOf('startRaid')<0 && !hid) return;
+          var lid='';
+          var li=f.querySelector('input[name="lid"]');
+          if(li) lid=li.getAttribute('value')||'';
+          if(!lid){
+            var m=act.match(/[?&]lid=(\\d+)/); if(m) lid=m[1];
+          }
+          if(!lid) return;
+          var tribe='';
+          var tr=f.querySelector('input[name="tribe"]');
+          if(tr) tribe=tr.getAttribute('value')||'';
+          var title='';
+          var tt=f.querySelector('.listTitleText');
+          if(tt) title=(tt.textContent||'').replace(/\\s+/g,' ').trim();
+          var slots=f.querySelectorAll('tr.slotRow, .slotRow').length;
+          var marks=f.querySelectorAll('input.markSlot:checked').length;
+          lists.push({lid:lid, tribe:tribe, title:title.substring(0,50), slots:slots, marked:marks});
+        });
+        return JSON.stringify({lists:lists});
+      }catch(e){ return JSON.stringify({lists:[]}); }
+    })();
+    """
+
+    /// إطلاق قايمة نهب: POST بنفس فورم الصفحة بالظبط (action/lid/a/sort/tribe/direction + السلوتات المحددة)
+    /// بيقرا الفورم الأصلي من الصفحة ويسلسل كل الحقول المخفية — أمان 100% ضد اختلاف النسخ.
+    func launchFarmList(completion: @escaping (Bool, String) -> Void) {
+        runJSON(Self.launchFarmKickJS) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                guard let self = self else { return }
+                self.runJSON(Self.fetchTrainResultJS) { obj in
+                    let state = (obj?["state"] as? String) ?? "pending"
+                    if state == "pending" || state.isEmpty {
+                        completion(false, "__pending__")
+                        return
+                    }
+                    completion(((obj?["ok"] as? Bool) ?? false), obj?["message"] as? String ?? "مفيش رد")
+                }
+            }
+        }
+    }
+
+    static let launchFarmKickJS = """
+    (function(){
+      try{
+        window.__utatarFetchTrain='pending';
+        var forms=document.querySelectorAll('form');
+        var target=null;
+        forms.forEach(function(f){
+          if(target) return;
+          var hid=f.querySelector('input[name="action"]');
+          var act=f.getAttribute('action')||'';
+          if(hid && (hid.getAttribute('value')==='startRaid'||hid.getAttribute('value')==='raidList'||hid.getAttribute('value')==='raid_all')) target=f;
+          else if(act.indexOf('startRaid')>=0) target=f;
+        });
+        if(!target){
+          window.__utatarFetchTrain=JSON.stringify({ok:false,message:'مفيش قايمة نهب في الصفحة — افتح نقطة التجمع ← تبويب قايمة النهب (t=99)'});
+          return;
+        }
+        // السلوتات: علّم أول هدف لو مفيش حاجة محددة (زي ما المستخدم بيعمل بإيده)
+        var marks=target.querySelectorAll('input.markSlot');
+        var anyChecked=false;
+        marks.forEach(function(mk){ if(mk.checked) anyChecked=true; });
+        if(!anyChecked && marks.length>0){ marks[0].checked=true; }
+        // سلسل الفورم بالظبط زي المتصفح
+        var els=target.querySelectorAll('input, select, textarea, button');
+        var parts=[];
+        for(var i=0;i<els.length;i++){
+          var e2=els[i]; var nm=e2.getAttribute('name'); if(!nm) continue;
+          var ty=(e2.getAttribute('type')||'').toLowerCase();
+          if(ty==='submit'||ty==='button') continue;
+          if(ty==='checkbox' && !e2.checked) continue;
+          if(ty==='radio' && !e2.checked) continue;
+          parts.push(encodeURIComponent(nm)+'='+encodeURIComponent(e2.value||''));
+        }
+        var act=target.getAttribute('action')||'build.php?id=39&t=99';
+        var url=act.indexOf('http')===0?act:('https://utatar.com/'+act.replace(/^\\//,''));
+        return fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:parts.join('&')})
+          .then(function(r){
+            window.__utatarFetchTrain=JSON.stringify({ok:(r.ok===true),message:'🏴 أمر نهب انطلق ('+parts.filter(function(pp){return pp.indexOf('slot')===0;}).length+' هدف)'+(r.redirected?' ✅':''),status:r.status});
+          });
+      }catch(e){ try{ window.__utatarFetchTrain=JSON.stringify({ok:false,message:e.message}); }catch(e2){} }
+    })();
+    """
+
     // MARK: - تسجيل ضغطة التدريب اليدوية وإعادتها (أضمن طريقة: نفس الحقول اللي نجحت بالظبط)
 
     /// بيتسطب على كل صفحة: أول ما تدوس "تدريب" بنفسك، بيحفظ الطلب الكامل في sessionStorage
@@ -1235,14 +1337,10 @@ final class GameEngine: NSObject {
           if(els.length>0){ incoming=true; hits.push(sel+' x'+els.length); }
         }catch(e){}
       });
-      // نص صندوق التحركات نفسه (أضمن): كلمة "هجوم" جوه صندوق التحركات = هجوم قادم فعلاً
+      // سكوت؟ نتأكد إن صندوق التحركات ظاهر أصلًا (hidden = مفيش حركات = آمن)
       try{
-        var mv=document.querySelector('.movements, table[id="movements"]');
-        if(mv){
-          var t=(mv.textContent||'').replace(/\\s+/g,' ');
-          if(mv.querySelector('img.att1, img.att2, .a1, .a2')){ incoming=true; }
-          else if(t.indexOf('هجوم')>=0){ incoming=true; hits.push('text:هجوم في التحركات'); }
-        }
+        var mv=document.querySelector('.movements');
+        if(mv && (mv.className||'').indexOf('hide')>=0) hits.push('movements:hidden');
       }catch(e5){}
       // عناصر عامة: للعرض بس — مش بتطلق إنذار لوحدها عشان نمنع الإنذارات الكاذبة
       var sels=['[class*="incoming"]','[class*="attack_warn"]','img[src*="alarm"]','[id*="alarm"]'];

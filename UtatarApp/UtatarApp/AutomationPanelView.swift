@@ -140,6 +140,9 @@ struct AutomationPanelView: View {
                         // ===== الهجوم والهروب =====
                         DefenseCard(viewModel: viewModel)
 
+                        // ===== قائمة النهب الأوتوماتية =====
+                        FarmCard(viewModel: viewModel)
+
                         // ===== تقارير التجسس =====
                         SpyReportsCard(viewModel: viewModel)
 
@@ -774,6 +777,64 @@ struct DefenseCard: View {
     }
 }
 
+// MARK: - كارت قائمة النهب
+
+struct FarmCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("🏴 النهب من قائمة التجمع")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                Toggle("", isOn: $viewModel.autoFarmEnabled)
+                    .utatarTint(.purple)
+                    .labelsHidden()
+                    .frame(width: 60)
+            }
+
+            Text("اعمل قايمة النهب في اللعبة عادي (نقطة التجمع ← قايمة النهب) وحدد الأهداف — والبوت هيطلق القايمة كل فترة من غير ما تفتح حاجة. الخادم بيبعث أقل من المتاح لوحده فمفيش مشكلة إن الأعداد كبيرة")
+                .font(.caption2)
+                .foregroundColor(.gray.opacity(0.85))
+
+            HStack(spacing: 8) {
+                Text("يهجم كل:")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                TextField("30", text: Binding(
+                    get: { "\(viewModel.farmIntervalMin)" },
+                    set: { viewModel.farmIntervalMin = max(5, Int($0.filter { $0.isNumber }) ?? 30) }
+                ))
+                .keyboardType(.numberPad)
+                .font(.caption)
+                .foregroundColor(.white)
+                .frame(width: 55)
+                .textFieldStyle(.roundedBorder)
+                Text("دقيقة (الحد الأدنى 5)")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                Spacer()
+            }
+
+            Button(action: { viewModel.testFarmLaunch() }) {
+                Text("🏴 اختبر: أطلق القايمة دلوقتي")
+                    .font(.caption2)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color.purple.opacity(0.8))
+                    .cornerRadius(6)
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
 // MARK: - كارت تنبيه الهجوم
 
 struct AttackAlertCard: View {
@@ -793,7 +854,7 @@ struct AttackAlertCard: View {
             }
             .padding(.top, 2)
 
-            Text("البوت بيفحص صندوق التحركات كل دورة (30 ثانية) — أول ما يلاقي هجوم جاي يبعتلك إشعار فوري، ولو الهروب مفعّل يبعت كل الجنود لواحة الهروب")
+            Text("بيدور بس على علامة الهجوم الجاي الرسمية (att1/att2 في صندوق التحركات) — هجماتك الخارجة وراجعاتك ما بتطلقوش. أول ما يلاقي هجوم جاي: إشعار فوري + هروب لو مفعّل")
                 .font(.caption2)
                 .foregroundColor(.gray.opacity(0.8))
 

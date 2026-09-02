@@ -75,6 +75,11 @@ class WebViewModel: NSObject, ObservableObject {
     @Published var lastTrainPost: [String: String] = [:] { didSet { UD.set(lastTrainPost, forKey: "lastTrainPost") } }
     /// حالة تنبيه الهجوم للعرض المباشر في اللوحة
     @Published var alertStatus: String = "" { didSet { UD.set(alertStatus, forKey: "alertStatus") } }
+    /// القرّاص: نهب تلقائي من قائمة النهب كل فترة محددة
+    @Published var autoFarmEnabled: Bool = false { didSet { UD.set(autoFarmEnabled, forKey: "autoFarmEnabled") } }
+    @Published var farmIntervalMin: Int = 30 { didSet { UD.set(farmIntervalMin, forKey: "farmIntervalMin") } }
+    private var nextFarmAt = Date.distantPast
+    private var farmInfoShown = false
     private var lastAlertNotifyAt = Date.distantPast
     /// أدق مهمة تدريب معلقة — النظام عمره ما ينسى التدريب حتى مع فترات الهدوء
     private func ensureTrainQueued(withinMinutes mi: Int) {
@@ -143,6 +148,8 @@ class WebViewModel: NSObject, ObservableObject {
         savedTroopTypes = (UD.array(forKey: "savedTroopTypes") as? [[String: Any]]) ?? []
         lastTrainPost = (UD.dictionary(forKey: "lastTrainPost") as? [String: String]) ?? [:]
         alertStatus = UD.string(forKey: "alertStatus") ?? ""
+        autoFarmEnabled = UD.bool(forKey: "autoFarmEnabled")
+        farmIntervalMin = UD.object(forKey: "farmIntervalMin") == nil ? 30 : max(5, UD.integer(forKey: "farmIntervalMin"))
         trainIntervalMin = UD.object(forKey: "trainIntervalMin") == nil ? 10 : max(1, UD.integer(forKey: "trainIntervalMin"))
         setupTimer()
         setupLifecycleWatchers()
@@ -260,7 +267,58 @@ class WebViewModel: NSObject, ObservableObject {
         if autoSpyEnabled {
             exploreAndSpy()
         }
+        if autoFarmEnabled {
+            runFarmCycle()
+        }
         checkAlerts()
+    }
+
+    /// نهب تلقائي من قائمة النهب: كل فترة بيطلق القايمة (الخادم بيبعت أقل من المتاح لوحده)
+    private func runFarmCycle() {
+        guard pendingAction == nil, Date() >= submitQuietUntil else { return }
+        guard Date() >= nextFarmAt else {
+            if !farmInfoShown {
+                farmInfoShown = true
+                let mins = max(1, Int(((nextFarmAt.timeIntervalSinceNow) / 60.0).rounded(.up)))
+                logActivity("🏴 النهب الجاي بعد \(mins) دقيقة")
+            }
+            return
+        }
+        if pageKind == "farmlist" {
+            doFarmLaunch()
+        } else {
+            // نحتاج صفحة قايمة النهب — ندخل عليها بنفسنا (مرة كل فترة، مش رفرش مستمر)
+            farmInfoShown = false
+            logActivity("🏴 ماشي لقايمة النهب عشان نطلق الهجمة...")
+            navigate(path: "build.php?id=39&t=99")
+        }
+    }
+
+    private func doFarmLaunch() {
+        engine.launchFarmList { [weak self] ok, msg in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if msg == "__pending__" { return }
+                if ok {
+                    self.nextFarmAt = Date().addingTimeInterval(TimeInterval(self.farmIntervalMin * 60))
+                    self.markSubmitBusy()
+                    self.logActivity("🏴 \(msg) — الجاية بعد \(self.farmIntervalMin) دقيقة ✅")
+                } else {
+                    // القايمة مش هنا؟ نجرب بعد 5 دقايق (وبرضه من غير رفرش متكرر)
+                    self.nextFarmAt = Date().addingTimeInterval(300)
+                    self.logActivity("⚠️ \(msg) — هجرب تاني بعد 5 دقايق")
+                }
+            }
+        }
+    }
+
+    /// 🏴 إطلاق فوري (زرار التجربة)
+    func testFarmLaunch() {
+        guard pageKind == "farmlist" else {
+            logActivity("🏴 افتح قايمة النهب الأول (نقطة التجمع ← قايمة النهب) وبعدها دوس الزرار")
+            return
+        }
+        doFarmLaunch()
     }
 
     /// التجسس التلقائي: كل دورة تجسس للقرية اللي بعد الحالي (دورياً).
@@ -477,6 +535,11 @@ class WebViewModel: NSObject, ObservableObject {
         if isAutomationEnabled, autoTrainTroops, pendingAction == nil, pageKind == "build",
            Date().timeIntervalSince(lastBotNavAt) < 20 {
             injectAutoTrain(force: true)
+        }
+        // البوت وصل لقايمة النهب بعد تنقله هو؟ أطلق على طول
+        if isAutomationEnabled, autoFarmEnabled, pendingAction == nil, pageKind == "farmlist",
+           Date().timeIntervalSince(lastBotNavAt) < 20 {
+            doFarmLaunch()
         }
         // البوت زار خلية خريطة (dorf3?id=)؟ نتعرف عليها: فيها لاعب؟ نتجسسها. فاضية؟ نكمل.
         if isAutomationEnabled, autoSpyEnabled, pendingAction == nil,
