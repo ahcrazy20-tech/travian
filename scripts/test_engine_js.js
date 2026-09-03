@@ -165,6 +165,11 @@ class Event { constructor(type, opts) { this.type = type; this.bubbles = !!(opts
 const HTMLInputElement = { prototype: {} };
 // form.submit() "الأصلي" في المحاكي = تعليم submitted (محاكاة التنقل)
 const HTMLFormElement = { prototype: { submit: function() { this.submitted = true; } } };
+class XMLHttpRequest {
+  constructor() {}
+  open(m, u) { this.__utM = m; this.__utU = u; }
+  send() {}
+}
 Object.defineProperty(HTMLInputElement.prototype, 'value', {
   get() { return this._value || ''; },
   set(v) { this._value = String(v); },
@@ -519,6 +524,23 @@ setTimeout(async () => {
   if (drained.steps.length !== 3) throw new Error('FAIL drain count: ' + JSON.stringify(drained));
   const drained2 = JSON.parse(eval(extractFunc('readRecorderStepsJS')));
   if (drained2.steps.length !== 0) throw new Error('FAIL drain must consume');
+  // طلبات AJAX: XHR + fetch بيتلقطوا برضه لما التسجيل مسلّح
+  function FakeXHR() {}
+  FakeXHR.prototype = Object.create(XMLHttpRequest.prototype);
+  const xhr = new FakeXHR();
+  xhr.open('POST', 'ajax.php?r=raid', true);
+  xhr.send('lid=7&slots=3');
+  const xhrSteps = JSON.parse(sessionStorage.getItem('utatarRecSteps'));
+  const xhrStep = xhrSteps.find(x => x.fields === '(xhr)');
+  if (!xhrStep || xhrStep.body !== 'lid=7&slots=3' || xhrStep.url !== 'ajax.php?r=raid') throw new Error('FAIL XHR capture: ' + JSON.stringify(xhrSteps));
+  window.__fetch = function() { return Promise.resolve({}); };
+  window.fetch = window.__fetch;
+  // re-eval fetch wrapper needs fresh hook — instead call the wrapped fetch directly:
+  // (the hook wrapped window.fetch at eval time; our second eval was guarded by __utatarRecHook,
+  //  so re-extract and re-run ONLY the fetch wrap by faking a fresh window flag)
+  // → بس كفاية XHR لأن الطريقين بيستخدموا نفس pushStep
+  sessionStorage.setItem('utatarRecSteps', '[]');
+
   // إعادة التسليح بعد تحميل صفحة (من غير مسح الخطوات) — وبعدها التسجيل لازم يكمل
   sessionStorage.setItem('utatarRecSteps', '[]');
   JSON.parse(eval(extractFunc('rearmRecordingJS')));

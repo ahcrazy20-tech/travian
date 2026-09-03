@@ -521,10 +521,22 @@ final class GameEngine: NSObject {
         function expired(){ try{ var at=parseInt(sessionStorage.getItem('utatarRecArmAt')||'0',10)||0; return at>0&&(Date.now()-at)>1800000; }catch(e){ return false; } }
         function steps(){ try{ return JSON.parse(sessionStorage.getItem('utatarRecSteps')||'[]')||[]; }catch(e){ return []; } }
         function saveSteps(a){ try{ sessionStorage.setItem('utatarRecSteps', JSON.stringify(a)); }catch(e){} }
-        function capture(f, btn){
+        function dedup(a,body,url){
+          var last=a.length?a[a.length-1]:null;
+          return !!(last && last.body===body && last.url===url && (Date.now()-(last.t||0))<1500);
+        }
+        function pushStep(st){
           try{
             if(!armed()) return;
             if(expired()){ sessionStorage.setItem('utatarRecArm','0'); return; }
+            var a=steps();
+            if(dedup(a,st.body,st.url)) return;
+            a.push(st); saveSteps(a);
+          }catch(e){}
+        }
+        function capture(f, btn){
+          try{
+            if(!armed()) return;
             var els=f.querySelectorAll('input,button,select,textarea');
             var parts=[]; var names=[];
             for(var i=0;i<els.length;i++){
@@ -540,12 +552,7 @@ final class GameEngine: NSObject {
             if(parts.length===0) return;
             var body=parts.join('&');
             var act=f.getAttribute('action')||location.pathname+location.search;
-            // منع التكرار: نفس الصفحة+الرابط+الجسم خلال 1.5 ثانية = نسخة واحدة
-            var a=steps();
-            var last=a.length?a[a.length-1]:null;
-            if(last && last.url===String(act) && last.body===body && (Date.now()-(last.t||0))<1500) return;
-            a.push({type:'post',page:String(location.href),url:String(act),body:body,fields:names.join(','),t:Date.now()});
-            saveSteps(a);
+            pushStep({type:'post',page:String(location.href),url:String(act),body:body,fields:names.join(','),t:Date.now()});
           }catch(e){}
         }
         var lastBtn=null;
@@ -560,11 +567,37 @@ final class GameEngine: NSObject {
         document.addEventListener('submit', function(ev){
           try{ var b=lastBtn; lastBtn=null; capture(ev.target,b); }catch(e){}
         }, true);
-        // الفورمات اللي بتتبعت بالجافاسكريبت form.submit() مش بتبعت حدث submit — بنلفها
         try{
           var _orig=HTMLFormElement.prototype.submit;
           HTMLFormElement.prototype.submit=function(){ try{ capture(this,null); }catch(e){} return _orig.apply(this,arguments); };
         }catch(e2){}
+        // طلبات AJAX: XHR + fetch (لو المحرك بيبعت حاجة من غير فورم)
+        try{
+          var _open=XMLHttpRequest.prototype.open, _send=XMLHttpRequest.prototype.send;
+          XMLHttpRequest.prototype.open=function(m,u){ this.__utM=m; this.__utU=u; return _open.apply(this,arguments); };
+          XMLHttpRequest.prototype.send=function(body){
+            try{
+              if(armed() && String(this.__utM||'').toUpperCase()==='POST' && body){
+                pushStep({type:'post',page:String(location.href),url:String(this.__utU||''),body:String(body),fields:'(xhr)',t:Date.now()});
+              }
+            }catch(e1){}
+            return _send.apply(this,arguments);
+          };
+        }catch(e3){}
+        try{
+          var _fetch=window.fetch;
+          if(_fetch){
+            window.fetch=function(input,init){
+              try{
+                var m=String((init&&init.method)||'GET').toUpperCase();
+                var b=init&&init.body?String(init.body):'';
+                var u=(typeof input==='string')?input:String((input&&input.url)||'');
+                if(armed() && m==='POST' && b){ pushStep({type:'post',page:String(location.href),url:u,body:b,fields:'(fetch)',t:Date.now()}); }
+              }catch(e4){}
+              return _fetch.apply(this,arguments);
+            };
+          }
+        }catch(e5){}
       }catch(e){}
     })();
     """
@@ -632,8 +665,8 @@ final class GameEngine: NSObject {
     (function(){ try{
       var raw=sessionStorage.getItem('utatarRecSteps')||'[]';
       sessionStorage.setItem('utatarRecSteps','[]');
-      return JSON.stringify({steps:JSON.parse(raw)||[]});
-    }catch(e){ return JSON.stringify({steps:[]}); } })();
+      return JSON.stringify({steps:JSON.parse(raw)||[],hook:!!window.__utatarRecHook,armed:sessionStorage.getItem('utatarRecArm')==='1'});
+    }catch(e){ return JSON.stringify({steps:[],hook:false,armed:false}); } })();
     """
 
     func armRecording(clear: Bool, completion: @escaping (Bool) -> Void) {
@@ -644,10 +677,12 @@ final class GameEngine: NSObject {
         runJSON(Self.stopRecordingJS) { _ in }
     }
 
-    /// سحب خطوات التسجيل المتراكمة (وفي نفس الوقت بنمسحها من الصفحة)
-    func drainRecorderSteps(completion: @escaping ([[String: Any]]) -> Void) {
+    /// سحب خطوات التسجيل المتراكمة + تشخيص الخطاب (hook/armed)
+    func drainRecorderSteps(completion: @escaping ([[String: Any]], Bool, Bool) -> Void) {
         runJSON(Self.readRecorderStepsJS) { obj in
-            completion((obj?["steps"] as? [[String: Any]]) ?? [])
+            completion((obj?["steps"] as? [[String: Any]]) ?? [],
+                       (obj?["hook"] as? Bool) ?? false,
+                       (obj?["armed"] as? Bool) ?? false)
         }
     }
 

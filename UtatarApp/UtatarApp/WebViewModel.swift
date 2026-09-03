@@ -224,9 +224,9 @@ class WebViewModel: NSObject, ObservableObject {
     @Published var recorderLog = ""               // LOG كامل للخطوات — يننسخ ويتبعتلي
     /// الخطوات المكتشفة لحد الآن (بتتسحب من الصفحة بعد كل تحميل)
     private var recorderDraft: [[String: String]] = []
-    var recorderPostCount: Int { recorderDraft.filter { $0["type"] == "post" }.count }
+    var recorderStepCount: Int { recorderDraft.count }
     var farmSteps: [[String: String]] { (UD.array(forKey: "recorderFarmSteps") as? [[String: String]]) ?? [] }
-    var recorderFarmPostCount: Int { farmSteps.filter { $0["type"] == "post" }.count }
+    var recorderFarmStepCount: Int { farmSteps.count }
     var farmRecording: [String: String] { (UD.dictionary(forKey: "farmRecording") as? [String: String]) ?? [:] }
     var retreatRecording: [String: String] { (UD.dictionary(forKey: "retreatRecording") as? [String: String]) ?? [:] }
 
@@ -259,6 +259,7 @@ class WebViewModel: NSObject, ObservableObject {
                 }
                 self.recorderArmed = true
                 self.recorderLog = "[\(Self.stamp())] 🎬 بدء تسجيل \(kind == "farm" ? "النهب" : "الهروب")"
+                self.recLog("ℹ️ كل صفحة تفتحها وكل ضغطة بتتسجل — امشي خطواتك عادي وارجع دوس توقف")
                 self.logActivity(kind == "farm"
                     ? "🎬 بدأ تسجيل النهب: امشي في خطواتك عادي (افتح القايمة، علّم الهدافين، دوس إطلاق) ولما تخلص ارجع دوس ⏹ توقف التسجيل"
                     : "🎬 بدأ تسجيل الهروب: اعمله بإيدك مرة (نقطة التجمع ← الكل ← نهب ← الإحداثيات ← موافق) ولما تخلص دوس ⏹ توقف التسجيل")
@@ -271,11 +272,13 @@ class WebViewModel: NSObject, ObservableObject {
         drainRecorderSteps(final: true)
     }
 
-    /// سحب الخطوات المتراكمة من الصفحة الحالية
+    /// سحب الخطوات المتراكمة من الصفحة الحالية (+ تشخيص الخطاب في الـ LOG)
     private func drainRecorderSteps(final: Bool) {
-        engine.drainRecorderSteps { [weak self] raw in
+        engine.drainRecorderSteps { [weak self] raw, hookOk, armedOk in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                if !hookOk { self.recLog("⚠️ الخطاب مش منصب على الصفحة دي (\(self.shortURL(self.webView?.url?.absoluteString ?? "")))") }
+                else if !armedOk { self.recLog("⚠️ التسجيل مش مسلّح على الصفحة دي — في مشكلة في التخزين") }
                 var added = 0
                 for st in raw {
                     var step: [String: String] = [:]
@@ -284,9 +287,9 @@ class WebViewModel: NSObject, ObservableObject {
                     self.recorderDraft.append(step)
                     added += 1
                     let fields = (step["fields"] ?? "").isEmpty ? "" : " — حقول: \(step["fields"] ?? "")"
-                    self.recLog("✍️ فورم على \(self.shortURL(step["page"] ?? "")): \(step["url"] ?? "")\(fields)")
+                    self.recLog("✍️ ضغطة/فورم على \(self.shortURL(step["page"] ?? "")): \(self.shortURL(step["url"] ?? ""))\(fields)")
                 }
-                if added > 0 { self.logActivity("📝 سجلت \(added) ضغطة جديدة (المجموع \(self.recorderPostCount))") }
+                if added > 0 { self.logActivity("📝 سجلت \(added) ضغطة جديدة (المجموع \(self.recorderStepCount) خطوة)") }
                 if final { self.finishRecording() }
             }
         }
@@ -296,19 +299,20 @@ class WebViewModel: NSObject, ObservableObject {
         recorderArmed = false
         engine.stopRecording()
         let posts = recorderDraft.filter { $0["type"] == "post" }
-        recLog("⏹ توقف التسجيل — \(posts.count) ضغطة مسجلة")
-        guard !posts.isEmpty else {
-            logActivity("⚠️ ما سجلتش أي ضغطة! ابدأ التسجيل تاني — أهم حاجة إن آخر خطوة تكون ضغطة (إطلاق/موافق)")
+        recLog("⏹ توقف التسجيل — \(recorderDraft.count) خطوة (فيهم \(posts.count) ضغطة فورم)")
+        guard !recorderDraft.isEmpty else {
+            logActivity("⚠️ ما اتسجلش أي خطوة! افتح أي صفحة في اللعبة بعد بدء التسجيل عشان أقدر ألقطها — وأعد المحاولة")
             return
         }
         if recorderKind == "farm" {
-            UD.set(posts, forKey: "recorderFarmSteps")
+            // كل الخطوات (صفحات + ضغطات) — إعادة التشغيل بتمشي بيها بالترتيب زي خطواتك بالظبط
+            UD.set(recorderDraft, forKey: "recorderFarmSteps")
             if let last = posts.last {
                 UD.set(["url": last["url"] ?? "", "body": last["body"] ?? ""], forKey: "farmRecording")
             }
             nextFarmAt = Date().addingTimeInterval(45)
-            recLog("💾 اتحفظت خطوات النهب (\(posts.count) ضغطة)")
-            logActivity("✅ تسجيل النهب تمام (\(posts.count) ضغطة)! دوس 🚀 ابدأ النهب دلوقتي — أو هيشتغل لوحده كل \(farmIntervalMin) دقيقة")
+            recLog("💾 اتحفظت خطوات النهب: \(recorderDraft.count) خطوة (\(posts.count) فورم + \(recorderDraft.count - posts.count) صفحة)")
+            logActivity("✅ تسجيل النهب تمام (\(recorderDraft.count) خطوة)! دوس 🚀 ابدأ النهب دلوقتي — أو هيشتغل لوحده كل \(farmIntervalMin) دقيقة")
         } else if let last = posts.last {
             UD.set(["url": last["url"] ?? "", "body": last["body"] ?? ""], forKey: "retreatRecording")
             let x = bodyParam(last["body"] ?? "", "x")
@@ -318,20 +322,26 @@ class WebViewModel: NSObject, ObservableObject {
             recLog("💾 اتحفظ الهروب لـ (\(x)|\(y)) بوضع \(w)")
             logActivity("✅ تسجيل الهروب تمام لـ (\(x)|\(y)) بوضع \(w) — أول هجوم حقيقي هيكرره بجنود القرية الحاليين")
         } else {
-            logActivity("⚠️ ما لقيتش ضغطة هروب — تأكد إنك داست موافق في الآخر وأعد التسجيل")
+            recLog("⚠️ الهروب: مفيش ضغطة فورم (a2b) — آخر خطوة: \(recorderDraft.last?["page"] ?? "-")")
+            logActivity("⚠️ ما لقيتش ضغطة الهروب — لازم آخر خطوة تكون ضغط موافق في صفحة إرسال القوات (نقطة التجمع ← نهب ← موافق). أعد التسجيل وابعتلي الـ LOG لو عدت تاني")
         }
     }
 
     /// بيندها بعد كل تحميل صفحة: إعادة تسليح + خطوة "فتحت صفحة" + سحب أي ضغطات جديدة
+    /// (على سيرفر أغلب خطوات النهب روابط وتنقلات GET — فالتسجيل بيحفظ كل صفحة انت فتحتها كخطوة)
     func recorderPageLoaded() {
         guard recorderArmed else { return }
         engine.armRecording(clear: false) { _ in }
         let href = webView?.url?.absoluteString ?? ""
-        if let lastGoto = recorderDraft.last, lastGoto["type"] == "goto", lastGoto["page"] == href {
-            // نفس الصفحة — من غير تكرار
-        } else if !href.isEmpty {
-            recorderDraft.append(["type": "goto", "page": href])
-            recLog("📄 فتحت: \(shortURL(href))")
+        // تنقل البوت نفسه (تجسس/تدريب) مايتسجلش — تسجيل المستخدم بس
+        let isBotNav = Date().timeIntervalSince(lastBotNavAt) < 3
+        if !href.isEmpty && !isBotNav {
+            if let last = recorderDraft.last, last["type"] == "nav", last["page"] == href {
+                // نفس الصفحة — من غير تكرار
+            } else {
+                recorderDraft.append(["type": "nav", "page": href])
+                recLog("📄 فتحت (\(recorderDraft.count)): \(shortURL(href))")
+            }
         }
         drainRecorderSteps(final: false)
     }
@@ -359,9 +369,9 @@ class WebViewModel: NSObject, ObservableObject {
         }
     }
 
-    /// 🚀 تشغيل خطوات النهب المسجلة
+    /// 🚀 تشغيل خطوات النهب المسجلة (صفحات + ضغطات — بالترتيب زي خطواتك)
     func startFarmStepsReplay(auto: Bool) {
-        let steps = farmSteps.filter { $0["type"] == "post" }
+        let steps = farmSteps
         guard !steps.isEmpty else {
             if !farmRecording.isEmpty {
                 doFarmReplay()
@@ -377,8 +387,8 @@ class WebViewModel: NSObject, ObservableObject {
         replayIdx = 0
         replayRetries = 0
         replayBusy = true
-        recLog(auto ? "▶️ تشغيل تلقائي لخطوات النهب (\(steps.count) ضغطة)" : "▶️ تشغيل يدوي لخطوات النهب (\(steps.count) ضغطة)")
-        logActivity(auto ? "🏴 وقت النهب — بشغل خطواتك المسجلة (\(steps.count) ضغطة)..." : "🚀 بشغل خطواتك المسجلة دلوقتي...")
+        recLog(auto ? "▶️ تشغيل تلقائي لخطوات النهب (\(steps.count) خطوة)" : "▶️ تشغيل يدوي لخطوات النهب (\(steps.count) خطوة)")
+        logActivity(auto ? "🏴 وقت النهب — بشغل خطواتك المسجلة (\(steps.count) خطوة)..." : "🚀 بشغل خطواتك المسجلة دلوقتي...")
         runNextReplayStep()
     }
 
@@ -406,6 +416,14 @@ class WebViewModel: NSObject, ObservableObject {
         }
         let st = replaySteps[replayIdx]
         let page = st["page"] ?? ""
+        // خطوة "فتح صفحة" (رابط/تنقل GET): بنروح للصفحة نفسها وبس
+        if st["type"] == "nav" {
+            recLog("📄 خطوة \(replayIdx + 1)/\(replaySteps.count): فتح \(shortURL(page))")
+            replayIdx += 1
+            pendingReplayAfterLoad = true
+            navigateAbs(page)
+            return
+        }
         if !samePage(page) {
             pendingReplayAfterLoad = true
             navigateAbs(page)
@@ -607,6 +625,11 @@ class WebViewModel: NSObject, ObservableObject {
     }
     
     private func runAutomationCycle() {
+        // تسجيل شغال؟ البوت كله يوقف — تسجيل المستخدم بس (مفيش تنقلات بوت تلوث التسجيل)
+        if recorderArmed {
+            drainRecorderSteps(final: false)
+            return
+        }
         // إعادة خطوات النهب شغالة؟ محدش يتحرك غيرها
         guard !replayBusy, !pendingReplayAfterLoad else { return }
         // Collect game state
@@ -656,7 +679,7 @@ class WebViewModel: NSObject, ObservableObject {
             return
         }
         // الأضمن: خطوات النهب المسجلة بإيد المستخدم — بنشغلها بالتسلسل
-        if recorderFarmPostCount > 0 {
+        if recorderFarmStepCount > 0 {
             startFarmStepsReplay(auto: true)
             return
         }
@@ -705,7 +728,7 @@ class WebViewModel: NSObject, ObservableObject {
 
     /// 🏴 إطلاق فوري (زرار التجربة)
     func testFarmLaunch() {
-        if recorderFarmPostCount > 0 {
+        if recorderFarmStepCount > 0 {
             startFarmStepsReplay(auto: false)
             return
         }

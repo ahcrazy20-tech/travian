@@ -904,7 +904,7 @@ struct FarmCard: View {
             // 🎬 التسجيل الكامل: بدء ← امشي خطواتك ← توقف ← زرار تشغيل
             if viewModel.recorderArmed && viewModel.recorderKind == "farm" {
                 Button(action: { viewModel.stopRecording() }) {
-                    Text("⏹ توقف التسجيل (\(viewModel.recorderPostCount) ضغطة لحد الآن)")
+                    Text("⏹ توقف التسجيل (\(viewModel.recorderStepCount) خطوة لحد الآن)")
                         .font(.caption)
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -919,7 +919,7 @@ struct FarmCard: View {
                 Text("🎬 في تسجيل هروب شغال دلوقتي — خلّصه الأول (كارت التنبيه فوق)")
                     .font(.caption2)
                     .foregroundColor(.orange)
-            } else if viewModel.recorderFarmPostCount == 0 {
+            } else if viewModel.recorderFarmStepCount == 0 {
                 Button(action: { viewModel.startRecording("farm") }) {
                     Text("🔴 بدء تسجيل النهب — امشي خطواتك وبعدها دوس توقف")
                         .font(.caption2)
@@ -931,7 +931,7 @@ struct FarmCard: View {
                 }
             } else {
                 Button(action: { viewModel.testFarmLaunch() }) {
-                    Text("🚀 ابدأ النهب دلوقتي (\(viewModel.recorderFarmPostCount) ضغطة مسجلة)")
+                    Text("🚀 ابدأ النهب دلوقتي (\(viewModel.recorderFarmStepCount) خطوة مسجلة)")
                         .font(.caption)
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -1007,7 +1007,7 @@ struct AttackAlertCard: View {
             // 🎬 تسجيل الهروب الكامل: بدء ← اعمله بإيدك ← توقف
             if viewModel.recorderArmed && viewModel.recorderKind == "retreat" {
                 Button(action: { viewModel.stopRecording() }) {
-                    Text("⏹ توقف التسجيل (\(viewModel.recorderPostCount) ضغطة لحد الآن)")
+                    Text("⏹ توقف التسجيل (\(viewModel.recorderStepCount) خطوة لحد الآن)")
                         .font(.caption)
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
