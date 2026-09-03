@@ -140,9 +140,6 @@ struct AutomationPanelView: View {
                         // ===== القرى المكتشفة + التجسس =====
                         VillagesCard(viewModel: viewModel)
 
-                        // ===== الهجوم والهروب =====
-                        DefenseCard(viewModel: viewModel)
-
                         // ===== قائمة النهب الأوتوماتية =====
                         FarmCard(viewModel: viewModel)
 
@@ -702,88 +699,6 @@ struct SpyReportsCard: View {
 
 // MARK: - كارت الهجوم والهروب
 
-struct DefenseCard: View {
-    @ObservedObject var viewModel: WebViewModel
-
-    var body: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Text("🛡️ الهروب عند الإنذار")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                Spacer()
-                Toggle("", isOn: $viewModel.autoRetreatEnabled)
-                    .utatarTint(.red)
-                    .labelsHidden()
-                    .frame(width: 60)
-            }
-
-            Text("لما تظهر علامة التنبيه الحمرا في اللعبة، البوت هيبعت كل جنودك لوجهة الهروب (تعزيز) تلقائياً.")
-                .font(.caption2)
-                .foregroundColor(.gray)
-
-            HStack(spacing: 8) {
-                Text("واحة الهروب:")
-                    .font(.caption2)
-                    .foregroundColor(.gray)
-                TextField("X", text: Binding(
-                    get: { viewModel.retreatX == 0 ? "" : "\(viewModel.retreatX)" },
-                    set: { viewModel.retreatX = Int($0) ?? 0 }
-                ))
-                .keyboardType(.numberPad)
-                .font(.caption)
-                .foregroundColor(.white)
-                .frame(width: 60)
-                .textFieldStyle(.roundedBorder)
-                TextField("Y", text: Binding(
-                    get: { viewModel.retreatY == 0 ? "" : "\(viewModel.retreatY)" },
-                    set: { viewModel.retreatY = Int($0) ?? 0 }
-                ))
-                .keyboardType(.numberPad)
-                .font(.caption)
-                .foregroundColor(.white)
-                .frame(width: 60)
-                .textFieldStyle(.roundedBorder)
-
-                Button(action: { viewModel.startRetreat(auto: false) }) {
-                    Text("اختبر الهروب")
-                        .font(.caption2)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(Color.orange.opacity(0.85))
-                        .cornerRadius(6)
-                }
-                Spacer()
-            }
-
-            HStack(spacing: 8) {
-                Text("عدد الهجوم اليدوي:")
-                    .font(.caption2)
-                    .foregroundColor(.gray)
-                TextField("50", text: Binding(
-                    get: { "\(viewModel.autoAttackCount)" },
-                    set: { viewModel.autoAttackCount = Int($0) ?? 50 }
-                ))
-                .keyboardType(.numberPad)
-                .font(.caption)
-                .foregroundColor(.white)
-                .frame(width: 70)
-                .textFieldStyle(.roundedBorder)
-                Spacer()
-            }
-        }
-        .padding()
-        .background(Color.gray.opacity(0.2))
-        .cornerRadius(12)
-        .padding(.horizontal)
-    }
-}
-
-// MARK: - كارت قائمة النهب
-
-// MARK: - كارت حفظ بيانات الدخول (Keychain على الموبايل — مش بتخرج من الجهاز)
-
 struct LoginCard: View {
     @ObservedObject var viewModel: WebViewModel
     @State private var user = ""
@@ -989,9 +904,19 @@ struct AttackAlertCard: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack {
-                Text("🚨 تنبيه الهجوم")
+                Text("🚨 تنبيه الهجوم + الهروب")
                     .font(.caption)
                     .foregroundColor(.gray)
+                Spacer()
+                Toggle("", isOn: $viewModel.autoRetreatEnabled)
+                    .utatarTint(.red)
+                    .labelsHidden()
+                    .frame(width: 60)
+            }
+            HStack {
+                Text("الهروب التلقائي عند الهجوم ↑ — ومكانه من تسجيل الهروب تحت")
+                    .font(.caption2)
+                    .foregroundColor(.gray.opacity(0.7))
                 Spacer()
                 Text(viewModel.alertStatus.isEmpty ? "بيستنى أول فحص..." : viewModel.alertStatus)
                     .font(.caption2)

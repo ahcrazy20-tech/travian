@@ -484,6 +484,41 @@ setTimeout(async () => {
   // hook: serialization logic sanity (pure function part)
   console.log('ALL SUBMIT-REPLAY TESTS DONE');
 
+  // ==== TRAIN HOOK GUARD: فورمات الهجوم (a2b/snd/x_token) ممنوعة من تسجيل التدريب ====
+  eval(extractFunc('trainSubmitHookJS'));
+  const sndForm = t('form', { name: 'snd', action: 'a2b.php' }, [
+    t('input', { type: 'text', name: 'x', value: '198' }),
+    t('input', { type: 'text', name: 'y', value: '300' }),
+    t('input', { type: 'radio', name: 'c', value: '4' }),
+    t('input', { type: 'text', name: 't[11]', value: '32' }),
+    t('input', { type: 'submit', name: 's1', value: 'ok' }),
+  ]);
+  sndForm.querySelectorAll('input[name="c"]')[0].checked = true;
+  fire('submit', sndForm);
+  const contam = sessionStorage.getItem('utatarTrainPost');
+  if (contam) throw new Error('FAIL train hook captured an ATTACK form (a2b/snd)! ' + contam);
+  // فورم فيه x_token بس (variant التأكيد) — ممنوع برضه
+  const tokForm = t('form', { action: 'a2b.php' }, [
+    t('input', { type: 'hidden', name: 'id', value: '39' }),
+    t('input', { type: 'hidden', name: 'x_token', value: 'abc' }),
+    t('input', { type: 'text', name: 't[12]', value: '32' }),
+  ]);
+  fire('submit', tokForm);
+  if (sessionStorage.getItem('utatarTrainPost')) throw new Error('FAIL train hook captured x_token form!');
+  // فورم تدريب حقيقي — لازم يتلقط عادي
+  const realTrain = t('form', { action: 'build.php?id=34' }, [
+    t('input', { type: 'text', name: 'tf[11]', value: '5' }),
+    t('input', { type: 'submit', name: 's1', value: 'train' }),
+  ]);
+  fire('submit', realTrain);
+  const tp = JSON.parse(sessionStorage.getItem('utatarTrainPost') || 'null');
+  if (!tp || tp.url.indexOf('build.php?id=34') < 0 || tp.body.indexOf('tf%5B11%5D=5') < 0) {
+    throw new Error('FAIL train hook must still capture real training forms: ' + sessionStorage.getItem('utatarTrainPost'));
+  }
+  sessionStorage.removeItem('utatarTrainPost');
+  H.els = H.els.filter(el => el !== sndForm && el !== tokForm && el !== realTrain);  // نفضّي الـ DOM للاختبارات الجاية
+  console.log('TRAIN-HOOK GUARD ✓ (a2b/snd/x_token skipped; real training captured)');
+
   // ==== RECORDER v2 (خطوات كاملة): button submit + programmatic form.submit() ====
   eval(extractFunc('recSubmitHookJS'));
   JSON.parse(eval(extractFunc('armRecordingJS')));           // بدء: بيمسح القديم ويسلّح

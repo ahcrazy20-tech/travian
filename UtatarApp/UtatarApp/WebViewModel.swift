@@ -295,6 +295,19 @@ class WebViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// اختيار ضغطة الهروب الحقيقية: آخر فورم فيه x و y و c (مش xhr) — دي ضغطة الإرسال الفعلية
+    private func pickRetreatPost(_ posts: [[String: String]]) -> [String: String]? {
+        for st in posts.reversed() {
+            if st["fields"] == "(xhr)" || st["fields"] == "(fetch)" { continue }
+            let b = st["body"] ?? ""
+            let hasXY = bodyParam(b, "x") != "?" && bodyParam(b, "y") != "?"
+            let hasC = bodyParam(b, "c") != "?" || b.contains("x_token")
+            if hasXY && hasC { return st }
+        }
+        // آخر فرصة: أي فورم فيه x و y
+        return posts.reversed().first { bodyParam($0["body"] ?? "", "x") != "?" && bodyParam($0["body"] ?? "", "y") != "?" }
+    }
+
     private func finishRecording() {
         recorderArmed = false
         engine.stopRecording()
@@ -313,13 +326,13 @@ class WebViewModel: NSObject, ObservableObject {
             nextFarmAt = Date().addingTimeInterval(45)
             recLog("💾 اتحفظت خطوات النهب: \(recorderDraft.count) خطوة (\(posts.count) فورم + \(recorderDraft.count - posts.count) صفحة)")
             logActivity("✅ تسجيل النهب تمام (\(recorderDraft.count) خطوة)! دوس 🚀 ابدأ النهب دلوقتي — أو هيشتغل لوحده كل \(farmIntervalMin) دقيقة")
-        } else if let last = posts.last {
+        } else if let last = pickRetreatPost(posts) {
             UD.set(["url": last["url"] ?? "", "body": last["body"] ?? ""], forKey: "retreatRecording")
             let x = bodyParam(last["body"] ?? "", "x")
             let y = bodyParam(last["body"] ?? "", "y")
             let c = bodyParam(last["body"] ?? "", "c")
             let w = c == "2" ? "تعزيز" : (c == "3" ? "هجوم" : "نهب")
-            recLog("💾 اتحفظ الهروب لـ (\(x)|\(y)) بوضع \(w)")
+            recLog("💾 اتحفظ الهروب لـ (\(x)|\(y)) بوضع \(w) (من فورم فيه x/y/c)")
             logActivity("✅ تسجيل الهروب تمام لـ (\(x)|\(y)) بوضع \(w) — أول هجوم حقيقي هيكرره بجنود القرية الحاليين")
         } else {
             recLog("⚠️ الهروب: مفيش ضغطة فورم (a2b) — آخر خطوة: \(recorderDraft.last?["page"] ?? "-")")
@@ -974,6 +987,8 @@ class WebViewModel: NSObject, ObservableObject {
         engine.installTrainSubmitHook()
         engine.readTrainPost { [weak self] post in
             guard let self = self, let post = post, !post["body", default: ""].isEmpty else { return }
+            // حماية مضاعفة: أي ضغطة من صفحة القوات (a2b) مش تدريب — نتجاهلها نهائيًا
+            if (post["url"] ?? "").contains("a2b") { return }
             DispatchQueue.main.async {
                 let changed = self.lastTrainPost["body"] != post["body"]
                 self.lastTrainPost = post

@@ -484,7 +484,12 @@ final class GameEngine: NSObject {
         document.addEventListener('submit', function(ev){
           try{
             var f=ev.target; if(!f||!f.querySelectorAll) return;
-            if(f.querySelector('input[name="x"],input[name="y"]')) return;
+            // ممنوع نهائيًا نلقط فورمات القوات/الهجوم (a2b): دي مش تدريب — إعادتها بتبعت جيش للسكة!
+            try{
+              if(f.querySelector('input[name="x"],input[name="y"],input[name="c"],input[name="x_token"],input[name="dname"]')) return;
+              if((f.getAttribute('name')||'')==='snd') return;
+              if(String(f.getAttribute('action')||'').indexOf('a2b')>=0) return;
+            }catch(e4){}
             var els=f.querySelectorAll('input,button');
             var parts=[];
             for(var i=0;i<els.length;i++){
