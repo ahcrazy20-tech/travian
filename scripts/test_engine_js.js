@@ -163,6 +163,8 @@ const fire = (type, target) => {
 // --- Browser globals the scripts rely on ---
 class Event { constructor(type, opts) { this.type = type; this.bubbles = !!(opts && opts.bubbles); } }
 const HTMLInputElement = { prototype: {} };
+// form.submit() "الأصلي" في المحاكي = تعليم submitted (محاكاة التنقل)
+const HTMLFormElement = { prototype: { submit: function() { this.submitted = true; } } };
 Object.defineProperty(HTMLInputElement.prototype, 'value', {
   get() { return this._value || ''; },
   set(v) { this._value = String(v); },
@@ -477,8 +479,9 @@ setTimeout(async () => {
   // hook: serialization logic sanity (pure function part)
   console.log('ALL SUBMIT-REPLAY TESTS DONE');
 
-  // ==== RECORDER (التسجيل باختيارات): a2b retreat form + farm startRaid form ====
+  // ==== RECORDER v2 (خطوات كاملة): button submit + programmatic form.submit() ====
   eval(extractFunc('recSubmitHookJS'));
+  JSON.parse(eval(extractFunc('armRecordingJS')));           // بدء: بيمسح القديم ويسلّح
   const a2bForm = t('form', { action: 'a2b.php' }, [
     t('input', { type: 'hidden', name: 'timestamp', value: '1725270000' }),
     t('input', { type: 'hidden', name: 'timestamp_checksum', value: 'abc123' }),
@@ -490,36 +493,43 @@ setTimeout(async () => {
     t('input', { type: 'submit', name: 's1', value: 'ok' }),
   ]);
   a2bForm.querySelectorAll('input[name="c"]')[1].checked = true;  // c=4 نهب
-  sessionStorage.setItem('utatarRecArm', '1');
-  sessionStorage.setItem('utatarRecArmAt', String(Date.now()));
   fire('click', a2bForm.querySelector('input[name="s1"]'));
   fire('submit', a2bForm);
-  const recRaw = sessionStorage.getItem('utatarRecPost');
-  if (!recRaw) throw new Error('FAIL recorder: retreat submit not captured');
-  const rec = JSON.parse(recRaw);
-  if (rec.url !== 'a2b.php') throw new Error('FAIL recorder url: ' + rec.url);
+  // الضغطة التانية في نفس الجلسة (خطوتين فأكتر) — فورم النهب + إرسال برمجي form.submit()
+  fire('submit', farmForm);                                   // بالزرار/الحدث
+  a2bForm.querySelector('input[name="y"]').value = '21';      // الهروب التاني بإحداثيات مختلفة
+  a2bForm.querySelectorAll('input[name="c"]')[1].checked = true;
+  HTMLFormElement.prototype.submit.call(a2bForm);            // الإرسال البرمجي (من غير حدث submit) لازم يتلقط
+  if (!farmForm.submitted) throw new Error('FAIL prototype wrap must call original submit');
+  const stepsRaw = JSON.parse(sessionStorage.getItem('utatarRecSteps'));
+  if (!Array.isArray(stepsRaw) || stepsRaw.length !== 3) throw new Error('FAIL steps count: ' + JSON.stringify(stepsRaw));
+  const st1 = stepsRaw[0];
+  if (st1.url !== 'a2b.php') throw new Error('FAIL step1 url: ' + st1.url);
   for (const piece of ['x=10', 'y=20', 'c=4', 't14=5', 's1=ok', 'timestamp_checksum=abc123']) {
-    if (rec.body.indexOf(piece) < 0) throw new Error('FAIL recorder body missing ' + piece + ' in ' + rec.body);
+    if (st1.body.indexOf(piece) < 0) throw new Error('FAIL step1 body missing ' + piece + ' in ' + st1.body);
   }
-  if (rec.body.indexOf('c=2') >= 0) throw new Error('FAIL recorder captured unchecked radio');
-  if (sessionStorage.getItem('utatarRecArm') !== '0') throw new Error('FAIL recorder arm not consumed');
-  const rr = JSON.parse(eval(extractFunc('readRecordingJS')));
-  if (rr.has !== true || rr.body !== rec.body) throw new Error('FAIL readRecording: ' + JSON.stringify(rr));
-  const rr2 = JSON.parse(eval(extractFunc('readRecordingJS')));
-  if (rr2.has !== false) throw new Error('FAIL recording not consumed');
-  // farm form recording (no submit button click — hidden fields only)
-  sessionStorage.setItem('utatarRecArm', '1');
-  fire('submit', farmForm);
-  const fr = JSON.parse(sessionStorage.getItem('utatarRecPost'));
+  if (st1.body.indexOf('c=2') >= 0) throw new Error('FAIL step1 captured unchecked radio');
+  if (st1.type !== 'post' || !st1.page || !st1.t) throw new Error('FAIL step1 meta: ' + JSON.stringify(st1));
   for (const piece of ['action=startRaid', 'a=c35', 'lid=7', 'tribe=2', 'slot101=']) {
-    if (fr.body.indexOf(piece) < 0) throw new Error('FAIL farm rec body missing ' + piece + ' in ' + fr.body);
+    if (stepsRaw[1].body.indexOf(piece) < 0) throw new Error('FAIL step2 body missing ' + piece);
   }
-  // unarmed submits are ignored
-  sessionStorage.removeItem('utatarRecPost');
-  sessionStorage.setItem('utatarRecArm', '0');
-  fire('submit', a2bForm);
-  if (sessionStorage.getItem('utatarRecPost')) throw new Error('FAIL recorder captured while unarmed');
-  console.log('RECORDER ✓ (retreat a2b with x/y/c=4/s1 + farm startRaid; arm consumed; unarmed ignored)');
+  if (stepsRaw[2].body.indexOf('y=21') < 0 || stepsRaw[2].body.indexOf('c=4') < 0) throw new Error('FAIL step3 (programmatic submit): ' + stepsRaw[2].body);
+  // سحب الخطوات بينقلهم ويمسحهم
+  const drained = JSON.parse(eval(extractFunc('readRecorderStepsJS')));
+  if (drained.steps.length !== 3) throw new Error('FAIL drain count: ' + JSON.stringify(drained));
+  const drained2 = JSON.parse(eval(extractFunc('readRecorderStepsJS')));
+  if (drained2.steps.length !== 0) throw new Error('FAIL drain must consume');
+  // إعادة التسليح بعد تحميل صفحة (من غير مسح الخطوات) — وبعدها التسجيل لازم يكمل
+  sessionStorage.setItem('utatarRecSteps', '[]');
+  JSON.parse(eval(extractFunc('rearmRecordingJS')));
+  fire('submit', farmForm);
+  const afterRearm = JSON.parse(sessionStorage.getItem('utatarRecSteps'));
+  if (afterRearm.length !== 1 || afterRearm[0].body.indexOf('lid=7') < 0) throw new Error('FAIL rearm must keep recording: ' + JSON.stringify(afterRearm));
+  // بعد إيقاف التسجيل: ممنوع يتسجل حاجة
+  JSON.parse(eval(extractFunc('stopRecordingJS')));
+  fire('submit', farmForm);
+  if (JSON.parse(sessionStorage.getItem('utatarRecSteps')).length !== 1) throw new Error('FAIL captured while stopped');
+  console.log('RECORDER v2 ✓ (3 steps: button submit + event + programmatic form.submit; drain; rearm; unarmed ignored)');
 
   // ==== AUTO-LOGIN (حفظ بيانات الدخول): EBDA login.tpl form ====
   const loginForm = t('form', { name: 'snd', action: 'login.php' }, [
@@ -547,13 +557,19 @@ setTimeout(async () => {
   if (wVal !== '390:844') throw new Error('FAIL autologin screen w: ' + wVal);
   await sleep(600);
   if (!loginForm.submitted) throw new Error('FAIL autologin form not natively submitted');
-  // غير لوجين: مفيش password input → found:false
+  // فورم فيه باسورد بس مش لوجين (تغيير باسورد مثلًا) → ممنوع يتحشر فيه (نشيل فورم اللوجين من الـ DOM الأول)
+  H.els.length = 0;
+  const chPass = t('form', { action: 'spieler.php?s=3' }, [
+    t('input', { type: 'password', name: 'npw', value: '' }),
+  ]);
+  const resCh = JSON.parse(eval(loginJS));
+  if (resCh.found !== false) throw new Error('FAIL autologin fired on non-login password form: ' + JSON.stringify(resCh));
+  // صفحة من غير أي فورم خالص (نفضّي الـ DOM — آخر اختبار)
   const noLoginJS = extractFunc('tryAutoLoginJS').split('\\(u)').join('""').split('\\(pw)').join('""');
-  // صفحة من غير أي password input خالص (نفضّي الـ DOM — آخر اختبار)
   H.els.length = 0;
   const res2 = JSON.parse(eval(noLoginJS));
-  if (res2.found !== false) throw new Error('FAIL autologin must not fire without password input: ' + JSON.stringify(res2));
-  console.log('AUTO-LOGIN ✓ (EBDA login form filled: user/pw/w, native submit; no password input -> skip)');
+  if (res2.found !== false) throw new Error('FAIL autologin must not fire without forms: ' + JSON.stringify(res2));
+  console.log('AUTO-LOGIN ✓ (EBDA login form filled: user/pw/w, native submit; non-login password form + empty page -> skip)');
 
   console.log('\nALL JS TESTS PASSED ✅');
 }, 4600);

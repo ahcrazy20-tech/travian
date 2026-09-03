@@ -123,6 +123,7 @@ class WebViewModel: NSObject, ObservableObject {
     private var nextFarmAt = Date.distantPast
     private var farmInfoShown = false
     private var lastAlertNotifyAt = Date.distantPast
+    private var lastAlertLoadCheck = Date.distantPast
     /// بعد إطلاق هروب: نستنى 10 دقايق قبل هروب تاني (علامة att1 بتفضل ظاهرة طول ما الهجوم في السكة)
     private var lastRetreatAt = Date.distantPast
 
@@ -134,40 +135,56 @@ class WebViewModel: NSObject, ObservableObject {
     private var autoLoginWindowAt = Date.distantPast
     private var lastAutoLoginAt = Date.distantPast
 
-    /// 🔐 حفظ الداتا: بتتكتب في الـ Keychain على الموبايل بس — مفيش حاجة بتتبعت لأي حد
+    /// 🔐 حفظ الداتا: الـ Keychain الأول — ولو مش متاح على الجهاز (TrollStore أحيانًا) مكان بديل على نفس الموبايل
+    private func storeLogin(_ val: String, forKey key: String) -> Bool {
+        Keychain.set(val, forKey: key)
+        if Keychain.get(key) == val { return true }
+        UD.set(Data(val.utf8).base64EncodedString(), forKey: "fb_\(key)")
+        return readLogin(key) == val
+    }
+
+    private func readLogin(_ key: String) -> String? {
+        if let v = Keychain.get(key), !v.isEmpty { return v }
+        if let b = UD.string(forKey: "fb_\(key)"), let d = Data(base64Encoded: b), let s = String(data: d, encoding: .utf8), !s.isEmpty { return s }
+        return nil
+    }
+
     func saveLogin(user: String, pass: String) {
         let u = user.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !u.isEmpty, !pass.isEmpty else {
             loginStatus = "❌ اكتب اسم المستخدم والباسورد الأول"
             return
         }
-        Keychain.set(u, forKey: "loginUser")
-        Keychain.set(pass, forKey: "loginPass")
-        hasSavedLogin = true
+        let okU = storeLogin(u, forKey: "loginUser")
+        let okP = storeLogin(pass, forKey: "loginPass")
+        hasSavedLogin = okU && okP
         autoLoginTries = 0
         autoLoginWindowAt = Date.distantPast
-        loginStatus = "✅ الداتا محفوظة — لو الجلسة قفلت هسجل دخولك لوحدي"
-        logActivity("🔐 حفظت بيانات الدخول على الموبايل (Keychain) — من دلوقتي لو طلعت صفحة الدخول هسجلها لوحدي")
+        if hasSavedLogin {
+            let where_ = (Keychain.get("loginPass") == pass) ? "الـ Keychain" : "مخزن بديل على الموبايل"
+            loginStatus = "✅ الداتا محفوظة (\(where_)) — لو الجلسة قفلت هسجل دخولك لوحدي"
+            logActivity("🔐 حفظت بيانات الدخول على الموبايل (\(where_)) — لو طلعت صفحة الدخول هسجلها لوحدي")
+        } else {
+            loginStatus = "❌ مقدرتش أحفظ على الجهاز ده — جرب تاني"
+        }
     }
 
     func deleteLogin() {
         Keychain.del("loginUser")
         Keychain.del("loginPass")
+        UD.removeObject(forKey: "fb_loginUser")
+        UD.removeObject(forKey: "fb_loginPass")
         hasSavedLogin = false
         loginStatus = ""
         logActivity("🗑 مسحت بيانات الدخول المحفوظة")
     }
 
-    /// أول ما أي صفحة تخلص تحميل: لو دي صفحة الدخول والداتا محفوظة → سجل لوحك (بحرص: 3 محاولات بحد أقصى)
+    /// بعد أي تحميل صفحة: الجافاسكريبت هو اللي بيكتشف فورم اللوجين — لو لقيه والداتا محفوظة يسجل لوحك
+    /// (3 محاولات/4 دقايق بحد أقصى لو الداتا غلط — ومفيش لوب مفتوح)
     private func tryAutoLogin() {
         guard autoLoginEnabled,
-              let u = Keychain.get("loginUser"), !u.isEmpty,
-              let p = Keychain.get("loginPass"), !p.isEmpty else { return }
-        let urlStr = (webView?.url?.absoluteString ?? "").lowercased()
-        guard urlStr.contains("login") else {
-            if autoLoginTries != 0 { autoLoginTries = 0; autoLoginWindowAt = Date.distantPast }
-            return
-        }
+              let u = readLogin("loginUser"), !u.isEmpty,
+              let p = readLogin("loginPass"), !p.isEmpty else { return }
         if Date().timeIntervalSince(autoLoginWindowAt) < 240, autoLoginTries >= 3 {
             if !loginStatus.contains("غلط") {
                 loginStatus = "❌ جربت 3 مرات ورجعت صفحة الدخول — الغالب الداتا المحفوظة غلط. اكتبها تاني واضغط حفظ"
@@ -175,75 +192,248 @@ class WebViewModel: NSObject, ObservableObject {
             }
             return
         }
-        guard Date().timeIntervalSince(lastAutoLoginAt) > 20 else { return }
-        if autoLoginTries == 0 { autoLoginWindowAt = Date() }
+        guard Date().timeIntervalSince(lastAutoLoginAt) > 15 else { return }
         lastAutoLoginAt = Date()
         engine.tryAutoLogin(user: u, pass: p) { [weak self] found, submitted, note in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if found && submitted {
+                    if self.autoLoginTries == 0 { self.autoLoginWindowAt = Date() }
                     self.autoLoginTries += 1
                     self.loginStatus = "🔐 سجلت دخولك لوحدي (محاولة \(self.autoLoginTries))..."
-                    self.logActivity("🔐 لقيت صفحة الدخول — بسجل دخولك لوحدي بالداتا المحفوظة")
+                    self.logActivity("🔐 صفحة الدخول ظهرت — بسجل دخولك لوحدي بالداتا المحفوظة (محاولة \(self.autoLoginTries))")
                 } else if found {
-                    self.loginStatus = "⚠️ لقيت صفحة الدخول بس مقدرتش أملأ الفورم (\(note))"
+                    self.loginStatus = "⚠️ لقيت فورم دخول بس مقدرتش أملأه (\(note))"
+                    self.logActivity("⚠️ فورم دخول موجود بس الفيل مش مظبوط (\(note))")
+                } else {
+                    // مش صفحة لوجين = إما إحنا في اللعبة (نجاح!) أو صفحة عادية
+                    if self.autoLoginTries != 0 {
+                        self.autoLoginTries = 0
+                        self.autoLoginWindowAt = Date.distantPast
+                        self.loginStatus = "✅ رجعنا للعبة — الدخول التلقائي نجح"
+                        self.logActivity("✅ الدخول التلقائي نجح ورجعنا للعبة")
+                    }
                 }
             }
         }
     }
 
-    // MARK: - التسجيل باختيارات: 🔴 سجّل هروب / 🔴 سجّل نهب → تعملها بإيدك مرة → البوت يعيدها
-    @Published var recordingMode: String? = nil   // "farm" أو "retreat" — شغال دلوقتي؟
+    // MARK: - مسجل الخطوات (🎬 تسجيل كامل بإيدك): بدء ← امشي خطواتك ← توقف ← زرار تشغيل + مدة
+    @Published var recorderArmed = false
+    @Published var recorderKind = "farm"          // "farm" أو "retreat"
+    @Published var recorderLog = ""               // LOG كامل للخطوات — يننسخ ويتبعتلي
+    /// الخطوات المكتشفة لحد الآن (بتتسحب من الصفحة بعد كل تحميل)
+    private var recorderDraft: [[String: String]] = []
+    var recorderPostCount: Int { recorderDraft.filter { $0["type"] == "post" }.count }
+    var farmSteps: [[String: String]] { (UD.array(forKey: "recorderFarmSteps") as? [[String: String]]) ?? [] }
+    var recorderFarmPostCount: Int { farmSteps.filter { $0["type"] == "post" }.count }
     var farmRecording: [String: String] { (UD.dictionary(forKey: "farmRecording") as? [String: String]) ?? [:] }
     var retreatRecording: [String: String] { (UD.dictionary(forKey: "retreatRecording") as? [String: String]) ?? [:] }
 
-    /// 🔴 بدء تسجيل: أي فورم المستخدم يضغطها بعد كده تتسجل مرة واحدة
-    func armRecording(_ mode: String) {
-        engine.armRecording { [weak self] ok in
+    private func recLog(_ line: String) {
+        recorderLog = (recorderLog + "\n" + "[\(Self.stamp())] \(line)").trimmingCharacters(in: .whitespacesAndNewlines)
+        UD.set(recorderLog, forKey: "recorderLog")
+    }
+
+    private static func stamp() -> String {
+        let df = DateFormatter(); df.dateFormat = "HH:mm:ss"
+        return df.string(from: Date())
+    }
+
+    private func shortURL(_ u: String) -> String {
+        guard let url = URL(string: u) else { return u }
+        let path = url.path.isEmpty ? "/" : url.path
+        return path + (url.query.map { "?\($0)" } ?? "")
+    }
+
+    /// 🎬 بدء التسجيل: امشي في خطواتك عادي ودوس توقف لما تخلص
+    func startRecording(_ kind: String) {
+        recorderKind = kind
+        recorderDraft = []
+        engine.armRecording(clear: true) { [weak self] ok in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if !ok {
-                    self.logActivity("❌ مقدرتش أسلّح التسجيل — جرب تاني")
+                    self.logActivity("❌ مقدرتش أبدأ التسجيل — جرب تاني")
                     return
                 }
-                self.recordingMode = mode
-                if mode == "farm" {
-                    self.logActivity("🎬 التسجيل اشتغل: افتح قايمة النهب زي ما بتعمل عادي وعلّم الهدافين واضغط الإطلاق — البوت هيسجل الضغطة دي ويعيدها لوحده كل فترة")
-                } else {
-                    self.logActivity("🎬 التسجيل اشتغل: اعمل الهروب بإيدك مرة واحدة (نقطة التجمع ← علّم الكل ← نهب ← إحداثيات الواحة ← موافق) — البوت هيسجله ويكرره لوحده لما يرصد هجوم")
-                }
+                self.recorderArmed = true
+                self.recorderLog = "[\(Self.stamp())] 🎬 بدء تسجيل \(kind == "farm" ? "النهب" : "الهروب")"
+                self.logActivity(kind == "farm"
+                    ? "🎬 بدأ تسجيل النهب: امشي في خطواتك عادي (افتح القايمة، علّم الهدافين، دوس إطلاق) ولما تخلص ارجع دوس ⏹ توقف التسجيل"
+                    : "🎬 بدأ تسجيل الهروب: اعمله بإيدك مرة (نقطة التجمع ← الكل ← نهب ← الإحداثيات ← موافق) ولما تخلص دوس ⏹ توقف التسجيل")
             }
         }
     }
 
-    /// ⏹ إيقاف التسجيل من غير ما يسجل حاجة
+    /// ⏹ توقف: نسحب آخر الخطوات ونتحفظ بيها
     func stopRecording() {
-        recordingMode = nil
-        engine.stopRecording()
-        logActivity("⏹ وقّفت التسجيل")
+        drainRecorderSteps(final: true)
     }
 
-    /// قراية أي ضغطة المستخدم سجلها للتوك — نندها بعد تحميل أي صفحة وفي الدورة
-    private func checkRecording() {
-        guard recordingMode != nil else { return }
-        engine.readRecording { [weak self] rec in
-            guard let self = self, let rec = rec, !rec["body", default: ""].isEmpty else { return }
+    /// سحب الخطوات المتراكمة من الصفحة الحالية
+    private func drainRecorderSteps(final: Bool) {
+        engine.drainRecorderSteps { [weak self] raw in
             DispatchQueue.main.async {
-                let mode = self.recordingMode ?? "farm"
-                self.recordingMode = nil
-                let save = ["url": rec["url"] ?? "", "body": rec["body"] ?? ""]
-                if mode == "farm" {
-                    self.UD.set(save, forKey: "farmRecording")
-                    self.nextFarmAt = Date().addingTimeInterval(60)  // أقرب فرصة يطلق الضغطة المسجلة
-                    self.logActivity("✅ سجلت ضغطة النهب بتاعتك! من دلوقتي هيطلقها لوحده كل \(self.farmIntervalMin) دقيقة من غير ما يفتح أي صفحة (حتى مش قايمة النهب)")
-                } else {
-                    self.UD.set(save, forKey: "retreatRecording")
-                    let x = self.bodyParam(save["body"] ?? "", "x")
-                    let y = self.bodyParam(save["body"] ?? "", "y")
-                    let c = self.bodyParam(save["body"] ?? "", "c")
-                    let w = c == "2" ? "تعزيز" : (c == "3" ? "هجوم" : "نهب")
-                    self.logActivity("✅ سجلت الهروب بتاعك لـ (\(x)|\(y)) بوضع \(w) — لما يرصد هجوم هيكرر نفس ضغطفك بجنود القرية الموجودين فعلاً")
+                guard let self = self else { return }
+                var added = 0
+                for st in raw {
+                    var step: [String: String] = [:]
+                    for (k, v) in st { step[k] = "\(v)" }
+                    guard step["type"] == "post" else { continue }
+                    self.recorderDraft.append(step)
+                    added += 1
+                    let fields = (step["fields"] ?? "").isEmpty ? "" : " — حقول: \(step["fields"] ?? "")"
+                    self.recLog("✍️ فورم على \(self.shortURL(step["page"] ?? "")): \(step["url"] ?? "")\(fields)")
                 }
+                if added > 0 { self.logActivity("📝 سجلت \(added) ضغطة جديدة (المجموع \(self.recorderPostCount))") }
+                if final { self.finishRecording() }
+            }
+        }
+    }
+
+    private func finishRecording() {
+        recorderArmed = false
+        engine.stopRecording()
+        let posts = recorderDraft.filter { $0["type"] == "post" }
+        recLog("⏹ توقف التسجيل — \(posts.count) ضغطة مسجلة")
+        guard !posts.isEmpty else {
+            logActivity("⚠️ ما سجلتش أي ضغطة! ابدأ التسجيل تاني — أهم حاجة إن آخر خطوة تكون ضغطة (إطلاق/موافق)")
+            return
+        }
+        if recorderKind == "farm" {
+            UD.set(posts, forKey: "recorderFarmSteps")
+            if let last = posts.last {
+                UD.set(["url": last["url"] ?? "", "body": last["body"] ?? ""], forKey: "farmRecording")
+            }
+            nextFarmAt = Date().addingTimeInterval(45)
+            recLog("💾 اتحفظت خطوات النهب (\(posts.count) ضغطة)")
+            logActivity("✅ تسجيل النهب تمام (\(posts.count) ضغطة)! دوس 🚀 ابدأ النهب دلوقتي — أو هيشتغل لوحده كل \(farmIntervalMin) دقيقة")
+        } else if let last = posts.last {
+            UD.set(["url": last["url"] ?? "", "body": last["body"] ?? ""], forKey: "retreatRecording")
+            let x = bodyParam(last["body"] ?? "", "x")
+            let y = bodyParam(last["body"] ?? "", "y")
+            let c = bodyParam(last["body"] ?? "", "c")
+            let w = c == "2" ? "تعزيز" : (c == "3" ? "هجوم" : "نهب")
+            recLog("💾 اتحفظ الهروب لـ (\(x)|\(y)) بوضع \(w)")
+            logActivity("✅ تسجيل الهروب تمام لـ (\(x)|\(y)) بوضع \(w) — أول هجوم حقيقي هيكرره بجنود القرية الحاليين")
+        } else {
+            logActivity("⚠️ ما لقيتش ضغطة هروب — تأكد إنك داست موافق في الآخر وأعد التسجيل")
+        }
+    }
+
+    /// بيندها بعد كل تحميل صفحة: إعادة تسليح + خطوة "فتحت صفحة" + سحب أي ضغطات جديدة
+    func recorderPageLoaded() {
+        guard recorderArmed else { return }
+        engine.armRecording(clear: false) { _ in }
+        let href = webView?.url?.absoluteString ?? ""
+        if let lastGoto = recorderDraft.last, lastGoto["type"] == "goto", lastGoto["page"] == href {
+            // نفس الصفحة — من غير تكرار
+        } else if !href.isEmpty {
+            recorderDraft.append(["type": "goto", "page": href])
+            recLog("📄 فتحت: \(shortURL(href))")
+        }
+        drainRecorderSteps(final: false)
+    }
+
+    /// 📋 نسخ LOG التسجيل (يبعتلي إياه أظبطه لو فيه مشكلة)
+    func copyRecorderLog() {
+        UIPasteboard.general.string = recorderLog
+        logActivity("📋 اتنسخ LOG التسجيل — الصقه في المحادثة")
+    }
+
+    // MARK: - إعادة تشغيل خطوات النهب المسجلة (بالتسلسل: افتح صفحة الخطوة ← ابعت الضغطة ← اللي بعدها)
+    private var replaySteps: [[String: String]] = []
+    private var replayIdx = 0
+    private var replayBusy = false
+    private var pendingReplayAfterLoad = false
+    private var replayRetries = 0
+
+    private func runFarmCycleFallbackNav() {
+        if pageKind == "farmlist" {
+            doFarmLaunch()
+        } else {
+            farmInfoShown = false
+            logActivity("🏴 ماشي لقايمة النهب... (نصيحة: سجّل النهب بإيدك مرة — الأضمن بكتير)")
+            navigate(path: "build.php?gid=16&t=99")
+        }
+    }
+
+    /// 🚀 تشغيل خطوات النهب المسجلة
+    func startFarmStepsReplay(auto: Bool) {
+        let steps = farmSteps.filter { $0["type"] == "post" }
+        guard !steps.isEmpty else {
+            if !farmRecording.isEmpty {
+                doFarmReplay()
+            } else if auto {
+                runFarmCycleFallbackNav()
+            } else {
+                logActivity("⚠️ مفيش خطوات مسجلة — دوس 🔴 بدء تسجيل النهب الأول")
+            }
+            return
+        }
+        guard !replayBusy else { return }
+        replaySteps = steps
+        replayIdx = 0
+        replayRetries = 0
+        replayBusy = true
+        recLog(auto ? "▶️ تشغيل تلقائي لخطوات النهب (\(steps.count) ضغطة)" : "▶️ تشغيل يدوي لخطوات النهب (\(steps.count) ضغطة)")
+        logActivity(auto ? "🏴 وقت النهب — بشغل خطواتك المسجلة (\(steps.count) ضغطة)..." : "🚀 بشغل خطواتك المسجلة دلوقتي...")
+        runNextReplayStep()
+    }
+
+    private func samePage(_ page: String) -> Bool {
+        guard let cur = webView?.url else { return false }
+        guard let target = URL(string: page) else { return false }
+        return cur.path == target.path && (cur.query ?? "") == (target.query ?? "")
+    }
+
+    /// تنقل مطلق (رابط كامل) — للتشغيل اللي المستخدم ضغطه بنفسه
+    private func navigateAbs(_ url: String) {
+        guard let u = URL(string: url) else { return }
+        lastBotNavAt = Date()
+        webView?.load(URLRequest(url: u))
+    }
+
+    private func runNextReplayStep() {
+        guard replayIdx < replaySteps.count else {
+            replayBusy = false
+            markSubmitBusy()
+            nextFarmAt = Date().addingTimeInterval(TimeInterval(farmIntervalMin * 60))
+            recLog("✅ كل خطوات النهب اشتغلت")
+            logActivity("🏴 خطوات النهب اشتغلت كلها ✅ — الجاية بعد \(farmIntervalMin) دقيقة")
+            return
+        }
+        let st = replaySteps[replayIdx]
+        let page = st["page"] ?? ""
+        if !samePage(page) {
+            pendingReplayAfterLoad = true
+            navigateAbs(page)
+            return
+        }
+        markSubmitBusy()
+        engine.replayRecordedPost(saved: st) { [weak self] ok, msg in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if msg == "__pending__" {
+                    self.replayRetries += 1
+                    if self.replayRetries > 2 {
+                        self.recLog("⚠️ ضغطة \(self.replayIdx + 1) مفيش منها رد — بنكمل")
+                        self.replayIdx += 1
+                        self.replayRetries = 0
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self.runNextReplayStep() }
+                    return
+                }
+                self.recLog("\(ok ? "✅" : "❌") ضغطة \(self.replayIdx + 1)/\(self.replaySteps.count): \(msg)")
+                if !ok && msg.contains("لوجين") {
+                    self.replayBusy = false
+                    self.logActivity("❌ الجلسة انقطعت أثناء النهب — أول ما تسجل دخول هيكمل عادي")
+                    return
+                }
+                self.replayIdx += 1
+                self.replayRetries = 0
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self.runNextReplayStep() }
             }
         }
     }
@@ -256,6 +446,7 @@ class WebViewModel: NSObject, ObservableObject {
         }
         return "?"
     }
+
     /// أدق مهمة تدريب معلقة — النظام عمره ما ينسى التدريب حتى مع فترات الهدوء
     private func ensureTrainQueued(withinMinutes mi: Int) {
         let next = Date().addingTimeInterval(TimeInterval(mi * 60))
@@ -301,7 +492,8 @@ class WebViewModel: NSObject, ObservableObject {
         autoBuildQueue = UD.bool(forKey: "autoBuild")
         autoSpyEnabled = UD.bool(forKey: "autoSpy")
         autoLoginEnabled = UD.object(forKey: "autoLogin") == nil ? true : UD.bool(forKey: "autoLogin")
-        hasSavedLogin = (Keychain.get("loginPass") != nil)
+        hasSavedLogin = (readLogin("loginPass") != nil)
+        recorderLog = UD.string(forKey: "recorderLog") ?? ""
         autoTrainCount = UD.object(forKey: "autoTrainCount") == nil ? 10 : UD.integer(forKey: "autoTrainCount")
         autoAttackCount = UD.object(forKey: "autoAttackCount") == nil ? 50 : UD.integer(forKey: "autoAttackCount")
         autoRetreatEnabled = UD.bool(forKey: "autoRetreat")
@@ -415,6 +607,8 @@ class WebViewModel: NSObject, ObservableObject {
     }
     
     private func runAutomationCycle() {
+        // إعادة خطوات النهب شغالة؟ محدش يتحرك غيرها
+        guard !replayBusy, !pendingReplayAfterLoad else { return }
         // Collect game state
         collectGameState()
         refreshGameData()
@@ -461,20 +655,16 @@ class WebViewModel: NSObject, ObservableObject {
             }
             return
         }
-        // الأضمن: الضغطة المسجلة بإيد المستخدم — fetch مباشر من أي صفحة، مفيش أي تنقل خالص
-        let rec = farmRecording
-        if !rec.isEmpty {
+        // الأضمن: خطوات النهب المسجلة بإيد المستخدم — بنشغلها بالتسلسل
+        if recorderFarmPostCount > 0 {
+            startFarmStepsReplay(auto: true)
+            return
+        }
+        if !farmRecording.isEmpty {
             doFarmReplay()
             return
         }
-        if pageKind == "farmlist" {
-            doFarmLaunch()
-        } else {
-            // مفيش تسجيل — نجرب نقطة التجمع نفسها (gid=16 زي رابط "نسخ الكل" في محرك اللعبة)
-            farmInfoShown = false
-            logActivity("🏴 ماشي لقايمة النهب عشان نطلق الهجمة... (نصيحة: سجّل النهب بإيدك مرة — الأضمن بكتير)")
-            navigate(path: "build.php?gid=16&t=99")
-        }
+        runFarmCycleFallbackNav()
     }
 
     /// إطلاق الضغطة المسجلة (نفس action المستخدم) — من أي صفحة، بدون تنقل
@@ -515,13 +705,17 @@ class WebViewModel: NSObject, ObservableObject {
 
     /// 🏴 إطلاق فوري (زرار التجربة)
     func testFarmLaunch() {
+        if recorderFarmPostCount > 0 {
+            startFarmStepsReplay(auto: false)
+            return
+        }
         if !farmRecording.isEmpty {
             logActivity("🏴 هطلق ضغطفك المسجلة حالاً (من غير ما أفتح أي صفحة)...")
             doFarmReplay()
             return
         }
         guard pageKind == "farmlist" else {
-            logActivity("🏴 افتح قايمة النهب الأول (نقطة التجمع ← قايمة النهب) وبعدها دوس الزرار — أو الأحسن: سجّل النهب بإيدك مرة وأبشر")
+            logActivity("🏴 مفيش تسجيل — دوس 🔴 بدء تسجيل النهب واعمل خطواتك مرة واحدة")
             return
         }
         doFarmLaunch()
@@ -738,12 +932,23 @@ class WebViewModel: NSObject, ObservableObject {
     func handlePageLoaded() {
         // لو الجلسة قفلت وطلعت صفحة الدخول: سجل لوحك فورًا بالداتا المحفوظة
         tryAutoLogin()
+        // مسجل الخطوات شغال؟ سجل الصفحة واسحب أي ضغطات جديدة
+        recorderPageLoaded()
+        // إعادة تشغيل خطوات مستنية تحميل الصفحة
+        if pendingReplayAfterLoad {
+            pendingReplayAfterLoad = false
+            runNextReplayStep()
+        }
+        // فحص تنبيه فوري بعد أي تحميل صفحة (مكمل للتايمر — الهجوم ما يعديش علينا)
+        if attackAlerts || autoRetreatEnabled, Date().timeIntervalSince(lastAlertLoadCheck) > 6 {
+            lastAlertLoadCheck = Date()
+            checkAlerts()
+        }
         refreshGameData()
         advancePendingAction()
         recordCurrentPageIfNeeded()
         // خطافات التسجيل (تدريب + المسجل العام) + قراية أي ضغطة المستخدم سجلها للتو
         engine.installTrainSubmitHook()
-        checkRecording()
         engine.readTrainPost { [weak self] post in
             guard let self = self, let post = post, !post["body", default: ""].isEmpty else { return }
             DispatchQueue.main.async {
@@ -887,7 +1092,7 @@ class WebViewModel: NSObject, ObservableObject {
     /// فحص إنذار الهجوم (بيشتغل على صفحات القرية بس) + الهروب التلقائي.
     private func checkAlerts() {
         guard pendingAction == nil, attackAlerts || autoRetreatEnabled else { return }
-        engine.readAlert { [weak self] incoming, hits in
+        engine.readAlert { [weak self] incoming, hits, hasMov, moves in
             guard let self = self else { return }
             DispatchQueue.main.async {
                 if incoming {
@@ -895,7 +1100,7 @@ class WebViewModel: NSObject, ObservableObject {
                     // إشعار كل 5 دقايق على الأكثر عشان ميبقاش سبام
                     if Date().timeIntervalSince(self.lastAlertNotifyAt) > 300 {
                         self.lastAlertNotifyAt = Date()
-                        self.logActivity("🚨 هجوم جاي على القرية! — راجع صفحة التحركات حالاً")
+                        self.logActivity("🚨 هجوم جاي على القرية! (\(hits.joined(separator: "، "))) — راجع صفحة التحركات حالاً")
                         self.sendNotification(title: "🚨 هجوم قادم!", body: "البوت رصد علامة الهجوم في التحركات — افتح اللعبة حالاً")
                     }
                     if self.autoRetreatEnabled, self.pendingAction == nil {
@@ -907,10 +1112,12 @@ class WebViewModel: NSObject, ObservableObject {
                             self.startRetreat(auto: true)
                         }
                     }
-                } else {
+                } else if hasMov {
                     let df = DateFormatter()
                     df.dateFormat = "HH:mm"
-                    self.alertStatus = "آمن ✅ — آخر فحص \(df.string(from: Date()))"
+                    self.alertStatus = "آمن ✅ — آخر فحص \(df.string(from: Date())) (حركات: \(moves)، مفيش هجوم)"
+                } else {
+                    self.alertStatus = "⚠️ الصفحة الحالية مفيهاش صندوق تحركات القرية — افتح قريتك عشان الفحص يشتغل"
                 }
             }
         }

@@ -517,25 +517,16 @@ final class GameEngine: NSObject {
       try{
         if(window.__utatarRecHook) return;
         window.__utatarRecHook=true;
-        var lastBtn=null;
-        document.addEventListener('click', function(ev){
+        function armed(){ try{ return sessionStorage.getItem('utatarRecArm')==='1'; }catch(e){ return false; } }
+        function expired(){ try{ var at=parseInt(sessionStorage.getItem('utatarRecArmAt')||'0',10)||0; return at>0&&(Date.now()-at)>1800000; }catch(e){ return false; } }
+        function steps(){ try{ return JSON.parse(sessionStorage.getItem('utatarRecSteps')||'[]')||[]; }catch(e){ return []; } }
+        function saveSteps(a){ try{ sessionStorage.setItem('utatarRecSteps', JSON.stringify(a)); }catch(e){} }
+        function capture(f, btn){
           try{
-            var t=ev.target; if(!t||!t.getAttribute) return;
-            var tn=String(t.tagName).toLowerCase();
-            var ty=(t.getAttribute('type')||'').toLowerCase();
-            if(tn==='input'&&ty==='submit'){ lastBtn={n:t.getAttribute('name'),v:t.value||''}; }
-            else if(tn==='button'){ lastBtn={n:t.getAttribute('name'),v:t.value||''}; }
-          }catch(e){}
-        }, true);
-        document.addEventListener('submit', function(ev){
-          try{
-            if(sessionStorage.getItem('utatarRecArm')!=='1') return;
-            // التسجيل بيقفل لوحده بعد 10 دقايق لو المستخدم ما سجلش حاجة
-            var at=parseInt(sessionStorage.getItem('utatarRecArmAt')||'0',10)||0;
-            if(at>0 && (Date.now()-at)>600000){ sessionStorage.setItem('utatarRecArm','0'); return; }
-            var f=ev.target; if(!f||!f.querySelectorAll) return;
+            if(!armed()) return;
+            if(expired()){ sessionStorage.setItem('utatarRecArm','0'); return; }
             var els=f.querySelectorAll('input,button,select,textarea');
-            var parts=[];
+            var parts=[]; var names=[];
             for(var i=0;i<els.length;i++){
               var e2=els[i]; var nm=e2.getAttribute('name'); if(!nm) continue;
               var ty=(e2.getAttribute('type')||'').toLowerCase();
@@ -543,26 +534,59 @@ final class GameEngine: NSObject {
               if(ty==='radio'&&!e2.checked) continue;
               if(ty==='checkbox'&&!e2.checked) continue;
               parts.push(encodeURIComponent(nm)+'='+encodeURIComponent(e2.value||''));
+              if(names.length<8) names.push(nm);
             }
-            if(lastBtn&&lastBtn.n){ parts.push(encodeURIComponent(lastBtn.n)+'='+encodeURIComponent(lastBtn.v)); lastBtn=null; }
+            if(btn&&btn.n){ parts.push(encodeURIComponent(btn.n)+'='+encodeURIComponent(btn.v)); if(names.length<8) names.push(btn.n); }
             if(parts.length===0) return;
+            var body=parts.join('&');
             var act=f.getAttribute('action')||location.pathname+location.search;
-            sessionStorage.setItem('utatarRecPost', JSON.stringify({url:String(act), body:parts.join('&'), page:String(location.href)}));
-            sessionStorage.setItem('utatarRecArm','0');
-          }catch(e3){}
+            // منع التكرار: نفس الصفحة+الرابط+الجسم خلال 1.5 ثانية = نسخة واحدة
+            var a=steps();
+            var last=a.length?a[a.length-1]:null;
+            if(last && last.url===String(act) && last.body===body && (Date.now()-(last.t||0))<1500) return;
+            a.push({type:'post',page:String(location.href),url:String(act),body:body,fields:names.join(','),t:Date.now()});
+            saveSteps(a);
+          }catch(e){}
+        }
+        var lastBtn=null;
+        document.addEventListener('click', function(ev){
+          try{
+            var t=ev.target; if(!t||!t.getAttribute) return;
+            var tn=String(t.tagName).toLowerCase();
+            var ty=(t.getAttribute('type')||'').toLowerCase();
+            if((tn==='input'&&ty==='submit')||tn==='button'){ lastBtn={n:t.getAttribute('name'),v:t.value||''}; }
+          }catch(e){}
         }, true);
+        document.addEventListener('submit', function(ev){
+          try{ var b=lastBtn; lastBtn=null; capture(ev.target,b); }catch(e){}
+        }, true);
+        // الفورمات اللي بتتبعت بالجافاسكريبت form.submit() مش بتبعت حدث submit — بنلفها
+        try{
+          var _orig=HTMLFormElement.prototype.submit;
+          HTMLFormElement.prototype.submit=function(){ try{ capture(this,null); }catch(e){} return _orig.apply(this,arguments); };
+        }catch(e2){}
       }catch(e){}
     })();
     """
 
-    /// تُسلّح التسجيل: أي فورم المستخدم يضغطها بعد كده تتسجل (بس مرة واحدة)
+    /// 🎬 بدء جلسة تسجيل: بنمسح أي خطوات قديمة وبنسلّح
     static let armRecordingJS = """
     (function(){ try{
-      sessionStorage.removeItem('utatarRecPost');
+      sessionStorage.setItem('utatarRecSteps','[]');
       sessionStorage.setItem('utatarRecArm','1');
       sessionStorage.setItem('utatarRecArmAt', String(Date.now()));
       return JSON.stringify({ok:true});
     }catch(e){ return JSON.stringify({ok:false,message:String(e)}); } })();
+    """
+
+    /// إعادة تسليح بعد أي تحميل صفحة (sessionStorage ممكن يتقفل مع إعادة تشغيل الويب فيو)
+    static let rearmRecordingJS = """
+    (function(){ try{
+      if(sessionStorage.getItem('utatarRecSteps')===null) sessionStorage.setItem('utatarRecSteps','[]');
+      sessionStorage.setItem('utatarRecArm','1');
+      if(sessionStorage.getItem('utatarRecArmAt')===null) sessionStorage.setItem('utatarRecArmAt', String(Date.now()));
+      return JSON.stringify({ok:true});
+    }catch(e){ return JSON.stringify({ok:false}); } })();
     """
 
     static let stopRecordingJS = """
@@ -577,10 +601,11 @@ final class GameEngine: NSObject {
         return """
         (function(){
           try{
-            var pwInput=document.querySelector('input[type="password"]');
+            // فورم اللوجين بس: action فيه login أو form اسمه snd (فورمات الباسورد التانية ممنوعة)
+            var f=document.querySelector('form[action*="login"], form[name="snd"]');
+            if(!f) return JSON.stringify({found:false});
+            var pwInput=f.querySelector('input[type="password"]');
             if(!pwInput) return JSON.stringify({found:false});
-            var f=pwInput.closest('form') || document.querySelector('form[name="snd"],form[action*="login"]');
-            if(!f) return JSON.stringify({found:true,filled:false,note:'مفيش فورم حوالين حقل الباسورد'});
             var uf=f.querySelector('input[name="user"]') || f.querySelector('input[type="text"]');
             if(!uf) return JSON.stringify({found:true,filled:false,note:'مش لاقي حقل اسم المستخدم'});
             var LU=\(u); var LP=\(pw);
@@ -602,31 +627,31 @@ final class GameEngine: NSObject {
         }
     }
 
-    /// بيقرا ويستهلك الضغطة المسجلة
-    static let readRecordingJS = """
+    /// بيقرا ويستهلك خطوات التسجيل (المصفوفة بتتنقل بين الصفحات في sessionStorage)
+    static let readRecorderStepsJS = """
     (function(){ try{
-      var raw=sessionStorage.getItem('utatarRecPost');
-      if(!raw) return JSON.stringify({has:false});
-      sessionStorage.removeItem('utatarRecPost');
-      var o=JSON.parse(raw);
-      return JSON.stringify({has:true,url:String(o.url||''),body:String(o.body||''),page:String(o.page||'')});
-    }catch(e){ return JSON.stringify({has:false}); } })();
+      var raw=sessionStorage.getItem('utatarRecSteps')||'[]';
+      sessionStorage.setItem('utatarRecSteps','[]');
+      return JSON.stringify({steps:JSON.parse(raw)||[]});
+    }catch(e){ return JSON.stringify({steps:[]}); } })();
     """
 
-    func armRecording(completion: @escaping (Bool) -> Void) {
-        runJSON(Self.armRecordingJS) { obj in completion(((obj?["ok"] as? Bool) ?? false)) }
+    func armRecording(clear: Bool, completion: @escaping (Bool) -> Void) {
+        runJSON(clear ? Self.armRecordingJS : Self.rearmRecordingJS) { obj in completion(((obj?["ok"] as? Bool) ?? false)) }
     }
 
     func stopRecording() {
         runJSON(Self.stopRecordingJS) { _ in }
     }
 
-    func readRecording(completion: @escaping ([String: String]?) -> Void) {
-        runJSON(Self.readRecordingJS) { obj in
-            guard let obj = obj, (obj["has"] as? Bool) == true else { completion(nil); return }
-            completion(["url": obj["url"] as? String ?? "", "body": obj["body"] as? String ?? "", "page": obj["page"] as? String ?? ""])
+    /// سحب خطوات التسجيل المتراكمة (وفي نفس الوقت بنمسحها من الصفحة)
+    func drainRecorderSteps(completion: @escaping ([[String: Any]]) -> Void) {
+        runJSON(Self.readRecorderStepsJS) { obj in
+            completion((obj?["steps"] as? [[String: Any]]) ?? [])
         }
     }
+
+
 
     /// إعادة ضغطة مسجلة عامة (النهب المثلًا): نفس الرابط ونفس الحقول بالظبط — fetch مباشر من أي صفحة
     /// من غير ما نفتح أي حاجة. الطلب بيروح لنفس action اللي المتصفح باعتها وإيد المستخدم — مفيش خطر لوج آوت.
@@ -1469,10 +1494,12 @@ final class GameEngine: NSObject {
     """
 
     /// كاشف إنذار الهجوم: بيدور على أيقونات/عناصر التحذير الشائعة.
-    func readAlert(completion: @escaping (Bool, [String]) -> Void) {
+    func readAlert(completion: @escaping (Bool, [String], Bool, Int) -> Void) {
         runJSON(Self.alertJS) { obj in
             let inc = (obj?["incoming"] as? Bool) ?? false
-            completion(inc, obj?["hits"] as? [String] ?? [])
+            let hasMov = (obj?["hasMov"] as? Bool) ?? false
+            let moves = (obj?["moves"] as? Int) ?? 0
+            completion(inc, obj?["hits"] as? [String] ?? [], hasMov, moves)
         }
     }
 
@@ -1480,30 +1507,25 @@ final class GameEngine: NSObject {
     (function(){
       var hits=[];
       var incoming=false;
-      // الحقيقة من مصدر محرك EBDA (movement.tpl):
-      // att1/a1 = هجوم قادم عليك — att2/a2 = هجماتك الخارجة (نهبك!) — att3 = راجعين/تعزيز
-      // فبنثق بس في att1/a1: أي حاجة تانية = حركات عادية مش إنذار
-      var incomingSels=['.movements img.att1','#movements img.att1','.movements span.a1','.movements .a1'];
+      // الحقيقة من محرك EBDA (movement.tpl): الهجوم القادم = img.att1 + span.a1
+      // بنلمها في أي حتة في الصفحة (مش لازم جوه .movements) — ضد اختلاف القوالب
+      var incomingSels=['img.att1','span.a1','.movements .a1','.a1.att1','#movements img.att1'];
       incomingSels.forEach(function(sel){
         try{
           var els=document.querySelectorAll(sel);
           if(els.length>0){ incoming=true; hits.push(sel+' x'+els.length); }
         }catch(e){}
       });
-      // سكوت؟ نتأكد إن صندوق التحركات ظاهر أصلًا (hidden = مفيش حركات = آمن)
+      // تشخيص: صندوق التحركات موجود؟ وكل حركات القوات قدامنا؟
+      var hasMov=false; var movesTotal=0;
       try{
-        var mv=document.querySelector('.movements');
-        if(mv && (mv.className||'').indexOf('hide')>=0) hits.push('movements:hidden');
+        var mv=document.querySelector('.movements, #movements');
+        hasMov=!!mv;
+        if(mv) movesTotal=mv.querySelectorAll('tr').length;
+        var mv2=document.querySelector('.movements');
+        if(mv2 && (mv2.className||'').indexOf('hide')>=0){ hasMov=true; movesTotal=0; }
       }catch(e5){}
-      // عناصر عامة: للعرض بس — مش بتطلق إنذار لوحدها عشان نمنع الإنذارات الكاذبة
-      var sels=['[class*="incoming"]','[class*="attack_warn"]','img[src*="alarm"]','[id*="alarm"]'];
-      sels.forEach(function(sel){
-        try{
-          var els=document.querySelectorAll(sel);
-          if(els.length>0) hits.push(sel+' x'+els.length);
-        }catch(e){}
-      });
-      return JSON.stringify({incoming:incoming,hits:hits});
+      return JSON.stringify({incoming:incoming,hits:hits,hasMov:hasMov,moves:movesTotal});
     })();
     """
 

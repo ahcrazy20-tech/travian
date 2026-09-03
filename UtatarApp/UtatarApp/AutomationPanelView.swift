@@ -901,26 +901,27 @@ struct FarmCard: View {
                 Spacer()
             }
 
-            // التسجيل باختيارات: سجّل ضغطة النهب بإيدك مرة → البوت يعيدها بالظبط
-            if viewModel.recordingMode == "farm" {
-                HStack(spacing: 8) {
-                    Text("🎬 بيسجل... افتح قايمة النهب واعمل الإطلاق عادي")
-                        .font(.caption2)
-                        .foregroundColor(.orange)
-                    Spacer()
-                    Button(action: { viewModel.stopRecording() }) {
-                        Text("⏹ وقف")
-                            .font(.caption2)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Color.gray)
-                            .cornerRadius(6)
-                    }
+            // 🎬 التسجيل الكامل: بدء ← امشي خطواتك ← توقف ← زرار تشغيل
+            if viewModel.recorderArmed && viewModel.recorderKind == "farm" {
+                Button(action: { viewModel.stopRecording() }) {
+                    Text("⏹ توقف التسجيل (\(viewModel.recorderPostCount) ضغطة لحد الآن)")
+                        .font(.caption)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(Color.red)
+                        .cornerRadius(6)
                 }
-            } else if viewModel.farmRecording.isEmpty {
-                Button(action: { viewModel.armRecording("farm") }) {
-                    Text("🔴 سجل النهب بإيدك (الأضمن — بيسجل ضغطفك ويعيدها)")
+                Text("امشي في خطواتك عادي: نقطة التجمع ← قايمة النهب ← علّم الهدافين ← إطلاق... ولما تخلص دوس توقف")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            } else if viewModel.recorderArmed {
+                Text("🎬 في تسجيل هروب شغال دلوقتي — خلّصه الأول (كارت التنبيه فوق)")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            } else if viewModel.recorderFarmPostCount == 0 {
+                Button(action: { viewModel.startRecording("farm") }) {
+                    Text("🔴 بدء تسجيل النهب — امشي خطواتك وبعدها دوس توقف")
                         .font(.caption2)
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -929,13 +930,18 @@ struct FarmCard: View {
                         .cornerRadius(6)
                 }
             } else {
+                Button(action: { viewModel.testFarmLaunch() }) {
+                    Text("🚀 ابدأ النهب دلوقتي (\(viewModel.recorderFarmPostCount) ضغطة مسجلة)")
+                        .font(.caption)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(Color.purple)
+                        .cornerRadius(6)
+                }
                 HStack(spacing: 8) {
-                    Text("✅ ضغطة النهب مسجلة بإيدك — البوت بيطلقها زي ما عملت بالظبط")
-                        .font(.caption2)
-                        .foregroundColor(.green)
-                    Spacer()
-                    Button(action: { viewModel.armRecording("farm") }) {
-                        Text("🎬 أعد التسجيل")
+                    Button(action: { viewModel.startRecording("farm") }) {
+                        Text("🎬 إعادة التسجيل")
                             .font(.caption2)
                             .foregroundColor(.white)
                             .padding(.horizontal, 10)
@@ -943,17 +949,29 @@ struct FarmCard: View {
                             .background(Color.red.opacity(0.75))
                             .cornerRadius(6)
                     }
+                    Button(action: { viewModel.copyRecorderLog() }) {
+                        Text("📋 انسخ LOG التسجيل")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.gray)
+                            .cornerRadius(6)
+                    }
+                    Spacer()
                 }
+                Text("✅ مسجل — هيشتغل لوحده كل \(viewModel.farmIntervalMin) دقيقة")
+                    .font(.caption2)
+                    .foregroundColor(.green)
             }
 
-            Button(action: { viewModel.testFarmLaunch() }) {
-                Text(viewModel.farmRecording.isEmpty ? "🏴 اختبر: أطلق القايمة دلوقتي" : "🏴 اختبر: أطلق ضغطفك المسجلة دلوقتي")
-                    .font(.caption2)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background(Color.purple.opacity(0.8))
-                    .cornerRadius(6)
+            // آخر سطور LOG التسجيل (باشوفها على طول)
+            if !viewModel.recorderLog.isEmpty {
+                Text(String(viewModel.recorderLog.split(separator: "\n").suffix(5).joined(separator: "\n")))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.orange.opacity(0.9))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(6)
             }
         }
         .padding()
@@ -986,26 +1004,27 @@ struct AttackAlertCard: View {
                 .font(.caption2)
                 .foregroundColor(.gray.opacity(0.8))
 
-            // التسجيل باختيارات: سجّل الهروب بإيدك مرة → البوت يكرره بنفس المكان والوضع
-            if viewModel.recordingMode == "retreat" {
-                HStack(spacing: 8) {
-                    Text("🎬 بيسجل... اعمل الهروب بإيدك مرة (نقطة التجمع ← الكل ← نهب ← الإحداثيات ← موافق)")
-                        .font(.caption2)
-                        .foregroundColor(.orange)
-                    Spacer()
-                    Button(action: { viewModel.stopRecording() }) {
-                        Text("⏹ وقف")
-                            .font(.caption2)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Color.gray)
-                            .cornerRadius(6)
-                    }
+            // 🎬 تسجيل الهروب الكامل: بدء ← اعمله بإيدك ← توقف
+            if viewModel.recorderArmed && viewModel.recorderKind == "retreat" {
+                Button(action: { viewModel.stopRecording() }) {
+                    Text("⏹ توقف التسجيل (\(viewModel.recorderPostCount) ضغطة لحد الآن)")
+                        .font(.caption)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(Color.red)
+                        .cornerRadius(6)
                 }
+                Text("اعمل الهروب بإيدك مرة: نقطة التجمع ← علّم الكل ← نهب ← الإحداثيات ← موافق — وبعدها دوس توقف")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            } else if viewModel.recorderArmed {
+                Text("🎬 في تسجيل نهب شغال دلوقتي — خلّصه الأول (كارت النهب تحت)")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
             } else if viewModel.retreatRecording.isEmpty {
-                Button(action: { viewModel.armRecording("retreat") }) {
-                    Text("🔴 سجل الهروب بإيدك مرة — البوت يكرره لوحده لما يجي هجوم")
+                Button(action: { viewModel.startRecording("retreat") }) {
+                    Text("🔴 بدء تسجيل الهروب — اعمله بإيدك مرة ودوس توقف")
                         .font(.caption2)
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -1015,17 +1034,26 @@ struct AttackAlertCard: View {
                 }
             } else {
                 HStack(spacing: 8) {
-                    Text("✅ الهروب مسجل بإيدك — لما يجي هجوم هيكرر نفس ضغطفك بجنود القريّة الحاليين")
+                    Text("✅ الهروب مسجل — لما يجي هجوم هيكرر خطواتك بجنود القريّة الحاليين")
                         .font(.caption2)
                         .foregroundColor(.green)
                     Spacer()
-                    Button(action: { viewModel.armRecording("retreat") }) {
-                        Text("🎬 أعد")
+                    Button(action: { viewModel.startRecording("retreat") }) {
+                        Text("🎬 إعادة")
                             .font(.caption2)
                             .foregroundColor(.white)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .background(Color.red.opacity(0.75))
+                            .cornerRadius(6)
+                    }
+                    Button(action: { viewModel.copyRecorderLog() }) {
+                        Text("📋 LOG")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.gray)
                             .cornerRadius(6)
                     }
                 }
