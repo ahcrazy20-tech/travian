@@ -1,0 +1,8 @@
+/Users/runner/work/travian/travian/UtatarApp/UtatarApp/SpyAttackBot.swift:598:23: warning: value 'self' was defined but never used; consider replacing with boolean test
+            guard let self = self else { return }
+                  ~~~~^~~~~~~
+                                  != nil
+/Users/runner/work/travian/travian/UtatarApp/UtatarApp/SpyAttackBot.swift:790:20: warning: immutable value 'attacks' was never used; consider replacing with '_' or removing it
+               let attacks = json["attacks"] as? [[String: Any]],
+               ~~~~^~~~~~~
+               _
