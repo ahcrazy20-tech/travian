@@ -27,7 +27,8 @@ struct WebViewContainer: UIViewRepresentable {
         
         viewModel.setupWebView(webView)
         spyBot.setup(webView: webView)
-        
+        viewModel.engine.attach(webView)
+
         return webView
     }
     
@@ -109,8 +110,10 @@ struct WebViewContainer: UIViewRepresentable {
             DispatchQueue.main.async {
                 self.viewModel.isLoading = false
                 self.viewModel.currentURL = webView.url?.absoluteString ?? ""
+                // قراءة الحالة الحقيقية للصفحة (موارد/جنود/قرى) + إكمال التجسس الآلي
+                self.viewModel.handlePageLoaded()
             }
-            
+
             // Inject automation scripts after page load
             if viewModel.isAutomationEnabled {
                 viewModel.collectGameState()
@@ -124,6 +127,10 @@ struct WebViewContainer: UIViewRepresentable {
         }
         
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            // نعرف مين اللي بيتحرك: لو مش البوت يبقى المستخدم — والبوت وقتها يسيب اللعبة له
+            if navigationAction.targetFrame?.isMainFrame != false {
+                DispatchQueue.main.async { self.viewModel.noteNavigation() }
+            }
             // Allow all navigation within the game
             decisionHandler(.allow)
         }

@@ -102,20 +102,6 @@ struct SettingsView: View {
                                 .background(Color.green.opacity(0.8))
                                 .cornerRadius(8)
                         }
-                        
-                        // Show JS result on screen (important for debugging the DOM).
-                        if !viewModel.jsConsoleResult.isEmpty {
-                            ScrollView {
-                                Text(viewModel.jsConsoleResult)
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .foregroundColor(.green)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(6)
-                            }
-                            .frame(maxHeight: 120)
-                            .background(Color.gray.opacity(0.2))
-                            .cornerRadius(8)
-                        }
                     }
                 }
                 .padding(.horizontal)
@@ -144,6 +130,7 @@ struct SettingsView: View {
                     TipRow(text: "فعّل الأوتوماتك من الزرار اللي تحت")
                     TipRow(text: "التنبيهات هتشتغل حتى لو التطبيق متقفل")
                     TipRow(text: "استخدم كونسول JS لأوامر متقدمة")
+                    TipRow(text: " والأوتوماتك بيفضل شغال في الخلفية 🎵 — ولو التطبيق اتقفل خالص، هيفتكر إعداداتك ويرجع شغّال لوحده لما تفتحه")
                 }
                 .padding()
                 .background(Color.gray.opacity(0.2))

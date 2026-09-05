@@ -4,3 +4,4 @@ build/
 DerivedData/
 *.xcarchive
 .DS_Store
+image-search/

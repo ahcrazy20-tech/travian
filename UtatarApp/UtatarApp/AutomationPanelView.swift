@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AutomationPanelView: View {
     @ObservedObject var viewModel: WebViewModel
@@ -40,9 +41,14 @@ struct AutomationPanelView: View {
                             Text("تشغيل الأوتوماتك")
                                 .font(.body)
                                 .foregroundColor(.white)
-                            Text(viewModel.isAutomationEnabled ? "شغّال ✅" : "موقف ❌")
+                            Text(viewModel.isAutomationEnabled ? "شغّال ✅ — الشاشة مش هتقفل ويفضل شغال في الخلفية 🎵" : "موقف ❌")
                                 .font(.caption)
                                 .foregroundColor(.gray)
+                            if viewModel.isAutomationEnabled {
+                                Text("سيب التطبيق مفتوح (والشاحن موصول الأحسن) — التدريب بيجيلك لوحده، والبوت بيدرب لوحده لما يوصل للثكنة")
+                                    .font(.caption2)
+                                    .foregroundColor(.gray.opacity(0.8))
+                            }
                         }
 
                         Spacer()
@@ -77,8 +83,16 @@ struct AutomationPanelView: View {
                         AutomationToggleRow(
                             icon: "person.3.fill",
                             title: "تدريب جنود تلقائي",
-                            subtitle: "يدرب جنود لما يقدر",
+                            subtitle: "يدرب جنود لما يقدر — فوراً لما تفعّله",
                             isOn: $viewModel.autoTrainTroops
+                        )
+
+                        AutomationToggleRow(
+                            icon: "eye.fill",
+                            title: "تجسس تلقائي",
+                            subtitle: "يبعت كشافين للقرى وحدة ورا التانية",
+                            isOn: $viewModel.autoSpyEnabled,
+                            color: .purple
                         )
 
                         AutomationToggleRow(
@@ -107,135 +121,1098 @@ struct AutomationPanelView: View {
                     }
                     .padding(.horizontal)
 
-                    // Game stats
-                    VStack(spacing: 8) {
-                        Text("📊 الموارد الحالية")
-                            .font(.caption)
-                            .foregroundColor(.gray)
+                    // ===== حفظ بيانات الدخول (عشان مش كل مقفل وافتح أسجل) =====
+                    LoginCard(viewModel: viewModel)
 
-                        HStack(spacing: 20) {
-                            ResourceBadge(icon: "🪵", value: viewModel.woodAmount)
-                            ResourceBadge(icon: "🧱", value: viewModel.clayAmount)
-                            ResourceBadge(icon: "⚙️", value: viewModel.ironAmount)
-                            ResourceBadge(icon: "🌾", value: viewModel.wheatAmount)
-                        }
-                    }
-                    .padding()
-                    .background(Color.gray.opacity(0.2))
-                    .cornerRadius(12)
-                    .padding(.horizontal)
+                    // ===== التدريب (أهم كارت — فوق خالص) =====
+                    TrainingCard(viewModel: viewModel)
 
-                    // Quick actions
-                    HStack(spacing: 12) {
-                        QuickActionButton(title: "🔄 تحديث", color: .blue) {
-                            viewModel.refresh()
-                        }
+                    // ===== تنبيه الهجوم =====
+                    AttackAlertCard(viewModel: viewModel)
 
-                        QuickActionButton(title: "⚡ فعّال كله", color: .green) {
-                            viewModel.autoCollectResources = true
-                            viewModel.autoBuildQueue = true
-                            viewModel.autoTrainTroops = true
-                            viewModel.attackAlerts = true
-                            viewModel.resourceFullAlerts = true
-                            viewModel.buildCompleteAlerts = true
-                            if !viewModel.isAutomationEnabled {
-                                viewModel.toggleAutomation()
-                            }
-                        }
+                    // ===== الموارد الحقيقية =====
+                    VStack(spacing: 16) {
+                        RealResourcesCard(viewModel: viewModel)
 
-                        QuickActionButton(title: "⏹️ وقّف كله", color: .red) {
-                            viewModel.autoCollectResources = false
-                            viewModel.autoBuildQueue = false
-                            viewModel.autoTrainTroops = false
-                            if viewModel.isAutomationEnabled {
-                                viewModel.toggleAutomation()
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
+                        // ===== الجنود في القرية =====
+                        HomeTroopsCard(viewModel: viewModel)
 
-                    Divider()
-                        .background(Color.gray.opacity(0.3))
+                        // ===== القرى المكتشفة + التجسس =====
+                        VillagesCard(viewModel: viewModel)
 
-                    // ===== Troop discovery & training =====
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("⚔️ اكتشاف وتدريب الجنود")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                            Spacer()
-                            if viewModel.isInspecting {
-                                ProgressView().utatarTint(.white)
-                            }
-                        }
+                        // ===== قائمة النهب الأوتوماتية =====
+                        FarmCard(viewModel: viewModel)
 
-                        AutoTrainRow(
-                            onDetect: { viewModel.detectTroops() },
-                            autoTrain: $viewModel.autoTrainTroops
-                        )
+                        // ===== تقارير التجسس =====
+                        SpyReportsCard(viewModel: viewModel)
 
-                        if viewModel.discoveredTroops.isEmpty {
-                            Text("لم نكتشف جنود بعد.\nافتح صفحة الثكنات ثم اضغط \"فحص الجنود\".")
-                                .font(.caption2)
-                                .foregroundColor(.gray)
-                                .multilineTextAlignment(.center)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 6)
-                        } else {
-                            ForEach(viewModel.discoveredTroops.indices, id: \.self) { i in
-                                TroopRowView(troop: $viewModel.discoveredTroops[i])
+                        // ===== تشخيص =====
+                        DiagnosticsCard(viewModel: viewModel)
+
+                        // ===== سجل الحركات =====
+                        ActivityCard(viewModel: viewModel)
+
+                        // ===== مسجل الصفحات (أوتوماتك) =====
+                        PageRecordsCard(viewModel: viewModel)
+
+                        // Quick actions
+                        HStack(spacing: 12) {
+                            QuickActionButton(title: "🔄 تحديث", color: .blue) {
+                                viewModel.refresh()
                             }
 
-                            Button(action: {
-                                viewModel.trainSelectedTroops()
-                            }) {
-                                Text("▶️ درّب المختار")
-                                    .font(.subheadline)
-                                    .foregroundColor(.white)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 10)
-                                    .background(Color.green.opacity(0.85))
-                                    .cornerRadius(10)
-                            }
-                            .disabled(viewModel.discoveredTroops.allSatisfy { $0.selectedCount == 0 })
-                            .opacity(viewModel.discoveredTroops.allSatisfy { $0.selectedCount == 0 } ? 0.5 : 1)
-                        }
-
-                        if !viewModel.lastScanMessage.isEmpty {
-                            Text(viewModel.lastScanMessage)
-                                .font(.caption2)
-                                .foregroundColor(.white)
-                                .padding(8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.gray.opacity(0.25))
-                                .cornerRadius(8)
-                        }
-
-                        if !viewModel.inspectionLog.isEmpty {
-                            DisclosureGroup("🛠️ تشخيص الصفحة") {
-                                ScrollView {
-                                    Text(viewModel.inspectionLog)
-                                        .font(.system(.caption2, design: .monospaced))
-                                        .foregroundColor(.green)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(6)
+                            QuickActionButton(title: "⚡ فعّال كله", color: .green) {
+                                viewModel.autoCollectResources = true
+                                viewModel.autoBuildQueue = true
+                                viewModel.autoTrainTroops = true
+                                viewModel.attackAlerts = true
+                                viewModel.resourceFullAlerts = true
+                                viewModel.buildCompleteAlerts = true
+                                if !viewModel.isAutomationEnabled {
+                                    viewModel.toggleAutomation()
                                 }
-                                .frame(maxHeight: 160)
                             }
-                            .foregroundColor(.gray)
-                            .font(.caption2)
+
+                            QuickActionButton(title: "⏹️ وقّف كله", color: .red) {
+                                viewModel.autoCollectResources = false
+                                viewModel.autoBuildQueue = false
+                                viewModel.autoTrainTroops = false
+                                if viewModel.isAutomationEnabled {
+                                    viewModel.toggleAutomation()
+                                }
+                            }
                         }
+                        .padding(.horizontal)
+
+                        if !viewModel.gameLog.isEmpty {
+                            Text(viewModel.gameLog)
+                                .font(.caption2)
+                                .foregroundColor(.yellow)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                                .background(Color.gray.opacity(0.2))
+                                .cornerRadius(8)
+                                .padding(.horizontal)
+                        }
+
+                        Text("الصفحة الحالية: \(viewModel.pageKind.isEmpty ? "-" : viewModel.pageKind)")
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                            .padding(.bottom, 16)
                     }
-                    .padding(.horizontal)
-                    .padding(.bottom, 16)
                 }
             }
-            .frame(maxHeight: 560)
+            .frame(maxHeight: 620)
             .background(Color.black.opacity(0.95))
             .cornerRadius(20)
             .padding(.horizontal, 8)
             .padding(.bottom, 8)
         }
+    }
+}
+
+// MARK: - كارت الموارد الحقيقية
+
+struct RealResourcesCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("📊 الموارد الحقيقية")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                Button(action: { viewModel.refreshGameData() }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                }
+            }
+
+            if let res = viewModel.gameResources {
+                ResBar(label: "🪵", value: res.wood, cap: res.woodCap, color: .orange)
+                ResBar(label: "🧱", value: res.clay, cap: res.clayCap, color: .brown)
+                ResBar(label: "⚙️", value: res.iron, cap: res.ironCap, color: .gray)
+                ResBar(label: "🌾", value: res.crop, cap: res.cropCap, color: .green)
+                if res.cropProd != 0 {
+                    Text("إنتاج القمح: \(res.cropProd)/ساعة")
+                        .font(.caption2)
+                        .foregroundColor(res.cropProd < 0 ? .red : .green)
+                }
+            } else {
+                Text("افتح أي صفحة في اللعبة عشان أقرا الموارد")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+struct ResBar: View {
+    let label: String
+    let value: Int
+    let cap: Int
+    let color: Color
+
+    private var amountText: String {
+        if cap > 0 {
+            return "\(label) \(value) / \(cap)"
+        }
+        return "\(label) \(value)"
+    }
+
+    var body: some View {
+        VStack(spacing: 2) {
+            HStack {
+                Text(amountText)
+                    .font(.caption2)
+                    .foregroundColor(.white)
+                Spacer()
+                if cap > 0 {
+                    Text("\(Int(Double(value) / Double(max(1, cap)) * 100))%")
+                        .font(.caption2)
+                        .foregroundColor(value >= cap ? .red : .gray)
+                }
+            }
+            if cap > 0 {
+                ProgressView(value: min(1.0, Double(value) / Double(max(1, cap))))
+                    .utatarTint(color)
+            }
+        }
+    }
+}
+
+// MARK: - كارت الجنود في القرية
+
+struct HomeTroopsCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    private var totalTroops: Int {
+        viewModel.homeTroops.reduce(0) { $0 + $1.count }
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("⚔️ الجنود في قريتك")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                Text("المجموع: \(totalTroops)")
+                    .font(.caption2)
+                    .foregroundColor(.white)
+            }
+
+            if viewModel.homeTroops.isEmpty {
+                Text("افتح نقطة التجمع (القرية ← نقطة التجمع) عشان أشوف الجنود")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            } else {
+                ForEach(viewModel.homeTroops.filter { $0.count > 0 }) { unit in
+                    HStack {
+                        Text(GameEngine.arabicUnitName(unit.id))
+                            .font(.caption)
+                            .foregroundColor(.white)
+                        if !unit.name.isEmpty && unit.name != GameEngine.arabicUnitName(unit.id) {
+                            Text(unit.name)
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                        }
+                        Spacer()
+                        Text("×\(unit.count)")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - كارت التدريب
+
+struct TrainingCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    private var hasRealMax: Bool {
+        viewModel.trainableUnits.contains { $0.max > 0 }
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("🏗️ التدريب")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                Toggle("", isOn: $viewModel.autoTrainTroops)
+                    .utatarTint(.green)
+                    .labelsHidden()
+                    .frame(width: 60)
+            }
+
+            Text("اكتب العدد جنب النوع اللي عايز تدريبه (حتى مليون) — السيب فاضي مش هيتدرب. ولو حابب تتأكد: اضغط «تدريب» داخل اللعبة مرة واحدة — البوت هيسجل ضغفتك ويعيد نفس الطلب كل فترة لوحده")
+                .font(.caption2)
+                .foregroundColor(.yellow.opacity(0.9))
+            if viewModel.lastTrainPost["body"]?.isEmpty == false {
+                Text("✅ ضغفتك مسجلة — البوت بيعيد نفس الطلب أوتوماتك كل فترة")
+                    .font(.caption2)
+                    .foregroundColor(.green)
+            }
+
+            HStack(spacing: 8) {
+                Text("يدرب كل:")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                TextField("10", text: Binding(
+                    get: { "\(viewModel.trainIntervalMin)" },
+                    set: { viewModel.trainIntervalMin = max(1, Int($0.filter { $0.isNumber }) ?? 10) }
+                ))
+                .keyboardType(.numberPad)
+                .font(.caption)
+                .foregroundColor(.white)
+                .frame(width: 55)
+                .textFieldStyle(.roundedBorder)
+                Text("دقيقة")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                Spacer()
+                if !viewModel.savedUnitIds.isEmpty {
+                    Text("🎒 محفوظ: \(viewModel.savedUnitIds.count) نوع")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                }
+            }
+
+            if viewModel.trainingCatalog.isEmpty {
+                Text("افتح الثكنة أو الإسطبل مرة واحدة بس — هيلقط الأنواع ويحفظها هنا للأبد، وبعدها هيدرب من أي صفحة لوحده")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            } else {
+                ForEach(viewModel.trainingCatalog) { unit in
+                    TrainRow(viewModel: viewModel, unit: unit)
+                }
+
+                if hasRealMax {
+                    Button(action: { trainAllMax() }) {
+                        Text("درّب الأقصى لكل نوع (مرة واحدة دلوقتي)")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(Color.green.opacity(0.8))
+                            .cornerRadius(6)
+                    }
+                }
+
+                Button(action: { viewModel.testTrainOnce() }) {
+                    Text("🔬 تجربة تشخيص: درّب 1 من كل نوع")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.blue.opacity(0.8))
+                        .cornerRadius(6)
+                }
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+
+    private func trainAllMax() {
+        let units = viewModel.trainableUnits
+        viewModel.engine.trainAllMax(units) { msg in
+            DispatchQueue.main.async {
+                viewModel.gameLog = msg
+            }
+        }
+    }
+}
+
+struct TrainRow: View {
+    @ObservedObject var viewModel: WebViewModel
+    let unit: TrainableUnit
+
+    private var countBinding: Binding<String> {
+        Binding(
+            get: { viewModel.trainCounts[unit.id] ?? "" },
+            set: { viewModel.trainCounts[unit.id] = $0 }
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack {
+                Text(unit.name.isEmpty ? GameEngine.arabicUnitName(unit.unitId) : unit.name)
+                    .font(.caption)
+                    .foregroundColor(.white)
+                if viewModel.savedUnitIds.contains(unit.id) {
+                    Text("✓ محفوظ")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                }
+                Spacer()
+                if unit.max > 0 {
+                    Text("متاح دلوقتي: \(unit.max)")
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                }
+            }
+
+            let affordableNow = unit.affordable(with: viewModel.gameResources ?? GameResources())
+            HStack(spacing: 8) {
+                TextField("اكتب العدد", text: countBinding)
+                    .keyboardType(.numberPad)
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .frame(width: 70)
+                    .textFieldStyle(.roundedBorder)
+
+                if affordableNow > 0 {
+                    Button(action: { viewModel.trainCounts[unit.id] = "\(affordableNow)" }) {
+                        Text("الأقصى الممكن (\(affordableNow))")
+                            .font(.caption2)
+                            .foregroundColor(.yellow)
+                    }
+                }
+
+                Spacer()
+
+                Button(action: { trainNow() }) {
+                    Text("درّب")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.orange.opacity(0.85))
+                        .cornerRadius(6)
+                }
+            }
+
+            Text("اكتب أي عدد (100 أو 1000000) — كل جولة هيدرب أقصى ما الموارد تسمح بيه")
+                .font(.caption2)
+                .foregroundColor(.gray.opacity(0.7))
+            if unit.costWood > 0 {
+                Text("التكلفة للواحد: 🪵\(unit.costWood) 🧱\(unit.costClay) ⚙️\(unit.costIron) 🌾\(unit.costCrop)")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func trainNow() {
+        let raw = (viewModel.trainCounts[unit.id] ?? "").filter { $0.isNumber }
+        let count = Int(raw) ?? 0
+        guard count > 0 else {
+            viewModel.gameLog = "اكتب العدد الأول"
+            return
+        }
+        viewModel.engine.trainUnit(unit.id, count: count) { msg in
+            DispatchQueue.main.async {
+                viewModel.gameLog = msg
+            }
+        }
+    }
+}
+
+// MARK: - كارت القرى + التجسس
+
+struct VillagesCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("🗺️ القرى على الخريطة")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                if viewModel.isScanningMap {
+                    ProgressView().utatarTint(.white)
+                } else {
+                    Button(action: { viewModel.openMap() }) {
+                        Text("افتح الخريطة")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.8))
+                            .cornerRadius(6)
+                    }
+                }
+
+            HStack(spacing: 8) {
+                TextField("X", text: $viewModel.manualSpyX)
+                    .keyboardType(.numberPad)
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .frame(width: 55)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Y", text: $viewModel.manualSpyY)
+                    .keyboardType(.numberPad)
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .frame(width: 55)
+                    .textFieldStyle(.roundedBorder)
+                Button(action: { viewModel.spyFromManualCoords() }) {
+                    Text("🕵️ جسّس")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.purple.opacity(0.85))
+                        .cornerRadius(6)
+                }
+                Button(action: { viewModel.attackFromManualCoords() }) {
+                    Text("⚔️ هاجم")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.red.opacity(0.85))
+                        .cornerRadius(6)
+                }
+                Spacer()
+            }
+            }
+
+            if viewModel.mapVillages.isEmpty {
+                Text("افتح الخريطة (karte.php) وأنا أمسح القرى لوحدي")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            } else {
+                ForEach(viewModel.mapVillages.prefix(12)) { village in
+                    VillageCardRow(viewModel: viewModel, village: village)
+                }
+                if viewModel.mapVillages.count > 12 {
+                    Text("+ \(viewModel.mapVillages.count - 12) قرية أخرى")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                }
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+struct VillageCardRow: View {
+    @ObservedObject var viewModel: WebViewModel
+    let village: MapVillage
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(village.name.isEmpty ? "قرية (\(village.x)|\(village.y))" : village.name)
+                    .font(.caption)
+                    .foregroundColor(.white)
+                HStack(spacing: 8) {
+                    Text("(\(village.x)|\(village.y))")
+                        .foregroundColor(.blue)
+                    if !village.player.isEmpty {
+                        Text("👤 \(village.player)")
+                    }
+                    if village.population > 0 {
+                        Text("👥 \(village.population)")
+                    }
+                }
+                .font(.caption2)
+                .foregroundColor(.gray)
+            }
+
+            Spacer()
+
+            Button(action: { viewModel.startSpy(x: village.x, y: village.y, name: village.name) }) {
+                Text("🕵️")
+                    .font(.caption2)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.purple.opacity(0.85))
+                    .cornerRadius(6)
+            }
+            Button(action: { viewModel.startAttack(x: village.x, y: village.y, name: village.name) }) {
+                Text("⚔️")
+                    .font(.caption2)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.red.opacity(0.85))
+                    .cornerRadius(6)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+}
+
+// MARK: - كارت تقارير التجسس
+
+struct SpyReportsCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("📜 تقارير التجسس")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                Button(action: { viewModel.refreshGameData() }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                }
+            }
+
+            if viewModel.spyReports.isEmpty {
+                Text("افتح صفحة التقارير (berichte) بعد ما الجواسيس يرجعوا")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            } else {
+                ForEach(viewModel.spyReports) { report in
+                    SpyReportRow(report: report)
+                }
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - كارت الهجوم والهروب
+
+struct LoginCard: View {
+    @ObservedObject var viewModel: WebViewModel
+    @State private var user = ""
+    @State private var pass = ""
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("🔐 حفظ بيانات الدخول")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                if viewModel.hasSavedLogin {
+                    Toggle("", isOn: $viewModel.autoLoginEnabled)
+                        .utatarTint(.green)
+                        .labelsHidden()
+                        .frame(width: 60)
+                }
+            }
+
+            if viewModel.hasSavedLogin {
+                Text("✅ الداتا محفوظة على موبايلك (Keychain) — أي مرة تلاقي صفحة الدخول البوت هيسجلها لوحده. لو غيرت الباسورد في اللعبة اكتبها تاني واضغط حفظ")
+                    .font(.caption2)
+                    .foregroundColor(.green.opacity(0.9))
+            } else {
+                Text("اكتبها مرة واحدة: بتتحفظ في موبايلك بس (Keychain مش UserDefaults) ومش بتخرج من الجهاز — وكل ما الجلسة تقفل البوت هيسجل دخولك لوحده")
+                    .font(.caption2)
+                    .foregroundColor(.gray.opacity(0.85))
+            }
+
+            if !viewModel.hasSavedLogin {
+                TextField("اسم المستخدم", text: $user)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("الباسورد", text: $pass)
+                    .font(.caption)
+                    .textFieldStyle(.roundedBorder)
+                Button(action: {
+                    viewModel.saveLogin(user: user, pass: pass)
+                    user = ""
+                    pass = ""
+                }) {
+                    Text("💾 حفظ وفعّل الدخول التلقائي")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .background(Color.green.opacity(0.8))
+                        .cornerRadius(6)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Text(viewModel.loginStatus.isEmpty ? "الدخول التلقائي شغال" : viewModel.loginStatus)
+                        .font(.caption2)
+                        .foregroundColor(viewModel.loginStatus.contains("❌") ? .red : .green)
+                    Spacer()
+                    Button(action: { viewModel.deleteLogin() }) {
+                        Text("🗑 مسح الداتا")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.gray)
+                            .cornerRadius(6)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+struct FarmCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("🏴 النهب من قائمة التجمع")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                Toggle("", isOn: $viewModel.autoFarmEnabled)
+                    .utatarTint(.purple)
+                    .labelsHidden()
+                    .frame(width: 60)
+            }
+
+            Text("اعمل قايمة النهب في اللعبة عادي (نقطة التجمع ← قايمة النهب) وحدد الأهداف — والبوت هيطلق القايمة كل فترة من غير ما تفتح حاجة. الخادم بيبعث أقل من المتاح لوحده فمفيش مشكلة إن الأعداد كبيرة")
+                .font(.caption2)
+                .foregroundColor(.gray.opacity(0.85))
+
+            HStack(spacing: 8) {
+                Text("يهجم كل:")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                TextField("30", text: Binding(
+                    get: { "\(viewModel.farmIntervalMin)" },
+                    set: { viewModel.farmIntervalMin = max(5, Int($0.filter { $0.isNumber }) ?? 30) }
+                ))
+                .keyboardType(.numberPad)
+                .font(.caption)
+                .foregroundColor(.white)
+                .frame(width: 55)
+                .textFieldStyle(.roundedBorder)
+                Text("دقيقة (الحد الأدنى 5)")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                Spacer()
+            }
+
+            // 🎬 التسجيل الكامل: بدء ← امشي خطواتك ← توقف ← زرار تشغيل
+            if viewModel.recorderArmed && viewModel.recorderKind == "farm" {
+                Button(action: { viewModel.stopRecording() }) {
+                    Text("⏹ توقف التسجيل (\(viewModel.recorderStepCount) خطوة لحد الآن)")
+                        .font(.caption)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(Color.red)
+                        .cornerRadius(6)
+                }
+                Text("امشي في خطواتك عادي: نقطة التجمع ← قايمة النهب ← علّم الهدافين ← إطلاق... ولما تخلص دوس توقف")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            } else if viewModel.recorderArmed {
+                Text("🎬 في تسجيل هروب شغال دلوقتي — خلّصه الأول (كارت التنبيه فوق)")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            } else if viewModel.recorderFarmStepCount == 0 {
+                Button(action: { viewModel.startRecording("farm") }) {
+                    Text("🔴 بدء تسجيل النهب — امشي خطواتك وبعدها دوس توقف")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .background(Color.red.opacity(0.75))
+                        .cornerRadius(6)
+                }
+            } else {
+                Button(action: { viewModel.testFarmLaunch() }) {
+                    Text("🚀 ابدأ النهب دلوقتي (\(viewModel.recorderFarmStepCount) خطوة مسجلة)")
+                        .font(.caption)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(Color.purple)
+                        .cornerRadius(6)
+                }
+                HStack(spacing: 8) {
+                    Button(action: { viewModel.startRecording("farm") }) {
+                        Text("🎬 إعادة التسجيل")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.red.opacity(0.75))
+                            .cornerRadius(6)
+                    }
+                    Button(action: { viewModel.copyRecorderLog() }) {
+                        Text("📋 LOG")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.gray)
+                            .cornerRadius(6)
+                    }
+                    Button(action: { viewModel.copyFarmDiag() }) {
+                        Text("🧪 تشخيص النهب")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.blue.opacity(0.8))
+                            .cornerRadius(6)
+                    }
+                    Spacer()
+                }
+                Text("✅ مسجل — هيشتغل لوحده كل \(viewModel.farmIntervalMin) دقيقة")
+                    .font(.caption2)
+                    .foregroundColor(.green)
+            }
+
+            // آخر سطور LOG التسجيل (باشوفها على طول)
+            if !viewModel.recorderLog.isEmpty {
+                Text(String(viewModel.recorderLog.split(separator: "\n").suffix(5).joined(separator: "\n")))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.orange.opacity(0.9))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(6)
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - كارت تنبيه الهجوم
+
+struct AttackAlertCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("🚨 تنبيه الهجوم + الهروب")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                Toggle("", isOn: $viewModel.autoRetreatEnabled)
+                    .utatarTint(.red)
+                    .labelsHidden()
+                    .frame(width: 60)
+            }
+            HStack {
+                Text("الهروب التلقائي عند الهجوم ↑ — ومكانه من تسجيل الهروب تحت")
+                    .font(.caption2)
+                    .foregroundColor(.gray.opacity(0.7))
+                Spacer()
+                Text(viewModel.alertStatus.isEmpty ? "بيستنى أول فحص..." : viewModel.alertStatus)
+                    .font(.caption2)
+                    .foregroundColor(viewModel.alertStatus.contains("هجوم") ? .red : .green)
+                    .multilineTextAlignment(.trailing)
+            }
+            .padding(.top, 2)
+
+            Text("بيدور بس على علامة الهجوم الجاي الرسمية (att1 في صندوق التحركات) — هجماتك الخارجة وراجعاتك ما بتطلقوش. أول ما يلاقي هجوم جاي: إشعار فوري + هروب لو مفعّل")
+                .font(.caption2)
+                .foregroundColor(.gray.opacity(0.8))
+
+            // 🎬 تسجيل الهروب الكامل: بدء ← اعمله بإيدك ← توقف
+            if viewModel.recorderArmed && viewModel.recorderKind == "retreat" {
+                Button(action: { viewModel.stopRecording() }) {
+                    Text("⏹ توقف التسجيل (\(viewModel.recorderStepCount) خطوة لحد الآن)")
+                        .font(.caption)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(Color.red)
+                        .cornerRadius(6)
+                }
+                Text("اعمل الهروب بإيدك مرة: نقطة التجمع ← علّم الكل ← نهب ← الإحداثيات ← موافق — وبعدها دوس توقف")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            } else if viewModel.recorderArmed {
+                Text("🎬 في تسجيل نهب شغال دلوقتي — خلّصه الأول (كارت النهب تحت)")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            } else if viewModel.retreatRecording.isEmpty {
+                Button(action: { viewModel.startRecording("retreat") }) {
+                    Text("🔴 بدء تسجيل الهروب — اعمله بإيدك مرة ودوس توقف")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .background(Color.red.opacity(0.75))
+                        .cornerRadius(6)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Text("✅ الهروب مسجل — لما يجي هجوم هيكرر خطواتك بجنود القريّة الحاليين")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                    Spacer()
+                    Button(action: { viewModel.startRecording("retreat") }) {
+                        Text("🎬 إعادة")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.red.opacity(0.75))
+                            .cornerRadius(6)
+                    }
+                    Button(action: { viewModel.copyRecorderLog() }) {
+                        Text("📋 LOG")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.gray)
+                            .cornerRadius(6)
+                    }
+                }
+            }
+
+            Button(action: { viewModel.testAlert() }) {
+                Text("🔔 اختبر التنبيه (إشعار تجريبي)")
+                    .font(.caption2)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color.red.opacity(0.75))
+                    .cornerRadius(6)
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - كارت مسجل الصفحات
+
+struct PageRecordsCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("📄 مسجل الصفحات (أوتوماتك)")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                if !viewModel.pageRecords.isEmpty {
+                    Button(action: {
+                        UIPasteboard.general.string = viewModel.pageRecords
+                        viewModel.gameLog = "📋 اتنسخ سجل الصفحات — الصقه في المحادثة"
+                    }) {
+                        Text("📋 نسخ الكل")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.green.opacity(0.8))
+                            .cornerRadius(6)
+                    }
+                    Button(action: { viewModel.pageRecords = "" }) {
+                        Text("مسح")
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+
+            Text("المسجل ده بيشتغل لوحده — امشي في اللعبة عادي (الثكنة، نقطة التجمع، الخريطة، إرسال جنود) وكل صفحة هتتسجل هنا. لما تخلص دوس نسخ الكل وابعته.")
+                .font(.caption2)
+                .foregroundColor(.gray)
+
+            if viewModel.pageRecords.isEmpty {
+                Text("لسه فاضي — امشي في اللعبة شوية وهتلاقي كل صفحة اتسجلت")
+                    .font(.caption2)
+                    .foregroundColor(.gray.opacity(0.8))
+            } else {
+                ScrollView {
+                    Text(viewModel.pageRecords)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.green)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(6)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 200)
+                .background(Color.black.opacity(0.6))
+                .cornerRadius(8)
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - كارت سجل الحركات
+
+struct ActivityCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("📜 سجل حركات البوت")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                if !viewModel.activityLog.isEmpty {
+                    Button(action: { viewModel.activityLog.removeAll() }) {
+                        Text("تفريغ")
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+
+            if viewModel.activityLog.isEmpty {
+                Text("هنا هتشوف كل حاجة البوت عملها — نجحت أو فشلت وليه")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(viewModel.activityLog.prefix(12).enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(6)
+                .background(Color.black.opacity(0.5))
+                .cornerRadius(8)
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - كارت التشخيص
+
+struct DiagnosticsCard: View {
+    @ObservedObject var viewModel: WebViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("🧰 تشخيص الصفحة الحقيقية")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                Spacer()
+                Button(action: { viewModel.runDiagnostics() }) {
+                    Text("افحص")
+                        .font(.caption2)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.8))
+                        .cornerRadius(6)
+                }
+                if !viewModel.diagnosticsOutput.isEmpty && viewModel.diagnosticsOutput != "جاري الفحص..." {
+                    Button(action: {
+                        UIPasteboard.general.string = viewModel.diagnosticsOutput
+                        viewModel.gameLog = "📋 النسخ اتعمل — الصق النتيجة في المحادثة"
+                    }) {
+                        Text("📋 نسخ")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Color.green.opacity(0.8))
+                            .cornerRadius(6)
+                    }
+                }
+            }
+
+            Text("افحص وانسخ والصق النتيجة في المحادثة — دي بتوريني اللعبة بعينيها عشان أظبط البوت بالظبط")
+                .font(.caption2)
+                .foregroundColor(.gray)
+
+            if !viewModel.diagnosticsOutput.isEmpty {
+                ScrollView {
+                    Text(viewModel.diagnosticsOutput)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.green)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(6)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 180)
+                .background(Color.black.opacity(0.6))
+                .cornerRadius(8)
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.2))
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - Rows المساعدة
+
+struct SpyReportRow: View {
+    let report: ScoutReport
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(report.subject)
+                .font(.caption2)
+                .foregroundColor(.white)
+                .lineLimit(1)
+            Text(resourcesLine)
+                .font(.caption2)
+                .foregroundColor(.yellow)
+            if !report.troopsText.isEmpty {
+                Text("\(report.troopsText)")
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(6)
+        .background(Color.gray.opacity(0.18))
+        .cornerRadius(6)
+    }
+
+    private var resourcesLine: String {
+        var t = "🪵 " + String(report.wood) + "  🧱 " + String(report.clay)
+        t += "  ⚙️ " + String(report.iron) + "  🌾 " + String(report.crop)
+        if report.wallLevel >= 0 {
+            t += "  — جدار " + String(report.wallLevel)
+        }
+        return t
     }
 }
 
@@ -272,24 +1249,6 @@ struct AutomationToggleRow: View {
     }
 }
 
-struct ResourceBadge: View {
-    let icon: String
-    let value: String
-
-    var body: some View {
-        VStack(spacing: 4) {
-            Text(icon)
-                .font(.title3)
-            Text(value)
-                .font(.caption2)
-                .foregroundColor(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
 struct QuickActionButton: View {
     let title: String
     let color: Color
@@ -305,87 +1264,5 @@ struct QuickActionButton: View {
                 .background(color.opacity(0.8))
                 .cornerRadius(8)
         }
-    }
-}
-
-// Row with "فحص الجنود" + the auto-train toggle.
-struct AutoTrainRow: View {
-    let onDetect: () -> Void
-    @Binding var autoTrain: Bool
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Button(action: onDetect) {
-                Label("فحص الجنود", systemImage: "magnifyingglass")
-                    .font(.caption)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.blue.opacity(0.85))
-                    .cornerRadius(8)
-            }
-
-            Toggle(isOn: $autoTrain) {
-                Text("تدريب تلقائي")
-                    .font(.caption)
-                    .foregroundColor(.white)
-            }
-            .utatarTint(.green)
-            .labelsHidden()
-        }
-    }
-}
-
-// One discovered troop row: icon, name, max, and +/- buttons for the count.
-// Uses only iOS 15-safe SwiftUI (no Stepper/labelsHidden).
-struct TroopRowView: View {
-    @Binding var troop: TroopType
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Text(troop.icon)
-                .font(.title3)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(troop.name)
-                    .font(.subheadline)
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                Text(troop.max > 0 ? "الحد الأقصى: \(troop.max)" : "الحد الأقصى: غير معروف")
-                    .font(.caption2)
-                    .foregroundColor(.gray)
-            }
-
-            Spacer()
-
-            // Decrement
-            Button(action: {
-                if troop.selectedCount > 0 { troop.selectedCount -= 1 }
-            }) {
-                Image(systemName: "minus.circle.fill")
-                    .font(.title3)
-                    .foregroundColor(.orange)
-            }
-
-            Text("\(troop.selectedCount)")
-                .font(.subheadline)
-                .foregroundColor(.white)
-                .frame(width: 40)
-
-            // Increment
-            Button(action: {
-                if troop.max == 0 || troop.selectedCount < troop.max {
-                    troop.selectedCount += 1
-                }
-            }) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.title3)
-                    .foregroundColor(.green)
-            }
-        }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 8)
-        .background(Color.gray.opacity(0.18))
-        .cornerRadius(8)
     }
 }

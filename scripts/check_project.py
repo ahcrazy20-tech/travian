@@ -135,10 +135,14 @@ def scan_declarations(paths):
             hit = fm or vm
             if hit and stack:
                 owner = stack[-1][0]
-                is_func = bool(fm)
-                sig = signature_of(lines, lineno - 1) if is_func else "var"
-                decls.setdefault(owner, {}).setdefault(hit.group("name"), []).append(
-                    ((hit.group("access") or "internal").strip(), os.path.basename(path), lineno, sig, is_func))
+                # only direct members of the type: the type's own opening brace
+                # already pushed depth to owner_depth+1, so members sit exactly
+                # one level deeper; anything further is inside a nested body.
+                if depth == stack[-1][1] + 1:
+                    is_func = bool(fm)
+                    sig = signature_of(lines, lineno - 1) if is_func else "var"
+                    decls.setdefault(owner, {}).setdefault(hit.group("name"), []).append(
+                        ((hit.group("access") or "internal").strip(), os.path.basename(path), lineno, sig, is_func))
             depth += line.count("{") - line.count("}")
             while stack and depth <= stack[-1][1]:
                 stack.pop()
