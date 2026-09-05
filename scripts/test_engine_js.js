@@ -588,6 +588,22 @@ setTimeout(async () => {
   if (JSON.parse(sessionStorage.getItem('utatarRecSteps')).length !== 1) throw new Error('FAIL captured while stopped');
   console.log('RECORDER v2 ✓ (3 steps: button submit + event + programmatic form.submit; drain; rearm; unarmed ignored)');
 
+  // ==== VERIFY OUTCOME (تأكيد النتيجة من اللعبة): dorf1 att2 + under_progress + login detection ====
+  const serverPages = {
+    'dorf1.php': '<div class="movements"><img class="att2" src="img/x.gif"/></div>',
+    'build.php?id=34': '<table class="under_progress"><tr><td class="desc">u11</td></tr></table>',
+  };
+  const fakeFetch = function(url) {
+    return Promise.resolve({ ok: true, url: url, text: function() { return Promise.resolve(serverPages[url] || ''); } });
+  };
+  const vfn = new Function('fetch', 'return ' + extractFunc('verifyOutcomeJS').split('\\(u)').join(JSON.stringify('build.php?id=34')).trim());
+  const v1 = JSON.parse(await vfn(fakeFetch));
+  if (v1.troopsOut !== true || v1.trainQueued !== true || v1.loggedOut !== false) throw new Error('FAIL verify: ' + JSON.stringify(v1));
+  serverPages['dorf1.php'] = '<form><input type="password" name="pw"/></form>';
+  const v2 = JSON.parse(await vfn(fakeFetch));
+  if (v2.loggedOut !== true || v2.trainQueued !== false) throw new Error('FAIL verify loggedOut: ' + JSON.stringify(v2));
+  console.log('VERIFY-OUTCOME ✓ (troops out via att2, train queue via under_progress, login page detected)');
+
   // ==== AUTO-LOGIN (حفظ بيانات الدخول): EBDA login.tpl form ====
   const loginForm = t('form', { name: 'snd', action: 'login.php' }, [
     t('input', { type: 'hidden', name: 'ft', value: 'a4' }),

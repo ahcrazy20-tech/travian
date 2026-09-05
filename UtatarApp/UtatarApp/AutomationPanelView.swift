@@ -865,12 +865,21 @@ struct FarmCard: View {
                             .cornerRadius(6)
                     }
                     Button(action: { viewModel.copyRecorderLog() }) {
-                        Text("📋 انسخ LOG التسجيل")
+                        Text("📋 LOG")
                             .font(.caption2)
                             .foregroundColor(.white)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .background(Color.gray)
+                            .cornerRadius(6)
+                    }
+                    Button(action: { viewModel.copyFarmDiag() }) {
+                        Text("🧪 تشخيص النهب")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.blue.opacity(0.8))
                             .cornerRadius(6)
                     }
                     Spacer()

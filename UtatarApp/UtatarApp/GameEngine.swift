@@ -682,6 +682,36 @@ final class GameEngine: NSObject {
         runJSON(Self.stopRecordingJS) { _ in }
     }
 
+    /// التحقق من النتيجة الفعلية في اللعبة (مش مجرد إن الطلب انبعت):
+    /// loggedOut = الجلسة مقطوعة | troopsOut = فيه قوات خرجة من القرية (att2 في dorf1) = النهب/الهروب انطلق فعلًا
+    /// trainQueued = طابور التدريب ظهر في الثكنة (under_progress) = التدريب اتقبل فعلًا
+    static func verifyOutcomeJS(trainUrl: String) -> String {
+        let u = (try? JSONEncoder().encode(trainUrl)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+        return """
+        (function(){
+          var out={loggedOut:false,troopsOut:false,trainQueued:false,error:''};
+          var trainUrl=\(u);
+          return fetch('dorf1.php',{credentials:'same-origin'}).then(function(r){ return r.text().then(function(t){
+            out.loggedOut=(/type=["']?password/.test(t)) || (String(r.url).indexOf('login')>=0);
+            out.troopsOut=/att2/.test(t) || /class=["']a2["']/.test(t);
+            if(!trainUrl || out.loggedOut) return JSON.stringify(out);
+            return fetch(trainUrl,{credentials:'same-origin'}).then(function(r2){ return r2.text().then(function(t2){
+              out.trainQueued=/under_progress/.test(t2);
+              return JSON.stringify(out);
+            }); });
+          }); }).catch(function(e){ out.error=String(e); return JSON.stringify(out); });
+        })();
+        """
+    }
+
+    func verifyOutcome(trainUrl: String = "", completion: @escaping (Bool, Bool, Bool) -> Void) {
+        runJSON(Self.verifyOutcomeJS(trainUrl: trainUrl)) { obj in
+            completion((obj?["loggedOut"] as? Bool) ?? false,
+                       (obj?["troopsOut"] as? Bool) ?? false,
+                       (obj?["trainQueued"] as? Bool) ?? false)
+        }
+    }
+
     /// سحب خطوات التسجيل المتراكمة + تشخيص الخطاب (hook/armed)
     func drainRecorderSteps(completion: @escaping ([[String: Any]], Bool, Bool) -> Void) {
         runJSON(Self.readRecorderStepsJS) { obj in

@@ -359,6 +359,44 @@ class WebViewModel: NSObject, ObservableObject {
         drainRecorderSteps(final: false)
     }
 
+    private var lastFarmDiag = ""
+
+    /// 🧪 تقرير تشخيص النهب: الخطوات المسجلة بالتفصيل + LOG + آخر تحقق من اللعبة — يننسخ ويتبعتلي
+    func copyFarmDiag() {
+        var r = "=== تقرير تشخيص النهب ===\n"
+        r += "خطوات مسجلة: \(farmSteps.count)\n"
+        for (i, st) in farmSteps.enumerated() {
+            r += "[\(i + 1)] \(st["type"] ?? "?") \(st["page"] ?? "")\n"
+            if st["type"] == "post" {
+                r += "    POST \(st["url"] ?? "")\n    body: \(st["body"] ?? "")\n"
+            }
+        }
+        r += "\n--- آخر تحقق من اللعبة ---\n\(lastFarmDiag.isEmpty ? "(لسه مفيش)" : lastFarmDiag)\n"
+        r += "\n--- LOG التسجيل ---\n\(recorderLog)\n"
+        UIPasteboard.general.string = r
+        logActivity("📋 اتنسخ تقرير تشخيص النهب — الصقه في المحادثة")
+    }
+
+    /// 🔍 التحقق من اللعبة بعد إعادة الضغطة: هل القوات خرجت فعلًا؟
+    private func verifyAfterFarm(msg: String) {
+        engine.verifyOutcome { [weak self] loggedOut, troopsOut, _ in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                let v: String
+                if loggedOut {
+                    v = "❌ الجلسة مقطوعة (صفحة لوجين) — الدخول التلقائي هيظبطها"
+                } else if troopsOut {
+                    v = "✅ اتأكدت من اللعبة: قوات خرجة من القرية — النهب انطلق فعلًا"
+                } else {
+                    v = "⚠️ الطلب خلص بس مفيش قوات خرجة — النهب ما انطلقش فعلًا (ابعت تقرير التشخيص 🧪)"
+                }
+                self.lastFarmDiag = "إعادة الضغطة: \(msg)\nتحقق اللعبة: \(v)"
+                self.recLog("🔍 \(v)")
+                self.logActivity("🔍 \(v)")
+            }
+        }
+    }
+
     /// 📋 نسخ LOG التسجيل (يبعتلي إياه أظبطه لو فيه مشكلة)
     func copyRecorderLog() {
         UIPasteboard.general.string = recorderLog
@@ -375,11 +413,13 @@ class WebViewModel: NSObject, ObservableObject {
     private func runFarmCycleFallbackNav() {
         if pageKind == "farmlist" {
             doFarmLaunch()
-        } else {
-            farmInfoShown = false
-            logActivity("🏴 ماشي لقايمة النهب... (نصيحة: سجّل النهب بإيدك مرة — الأضمن بكتير)")
-            navigate(path: "build.php?gid=16&t=99")
+            return
         }
+        // بدون تسجيل: البوت ماينقلش لوحده خالص (كل مسارات التخمين اتشالت عشان الدقة)
+        // لو المستخدم أصلاً واقع على صفحة القايمة هنطلق، غير كده رسالة واضحة وإعادة جدولة
+        farmInfoShown = false
+        logActivity("🏴 عشان النهب يشتغل بدقة: دوس 🔴 بدء تسجيل النهب وامشي خطواتك مرة واحدة — بعد كده كله أوتوماتيك")
+        nextFarmAt = Date().addingTimeInterval(300)
     }
 
     /// 🚀 تشغيل خطوات النهب المسجلة (صفحات + ضغطات — بالترتيب زي خطواتك)
@@ -425,6 +465,23 @@ class WebViewModel: NSObject, ObservableObject {
             nextFarmAt = Date().addingTimeInterval(TimeInterval(farmIntervalMin * 60))
             recLog("✅ كل خطوات النهب اشتغلت")
             logActivity("🏴 خطوات النهب اشتغلت كلها ✅ — الجاية بعد \(farmIntervalMin) دقيقة")
+            // الأهم: نتأكد من اللعبة نفسها إن القوات خرجت فعلًا
+            engine.verifyOutcome { [weak self] loggedOut, troopsOut, _ in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if loggedOut {
+                        self.recLog("❌ تحقق اللعبة: الجلسة مقطوعة (لوجين)")
+                        self.logActivity("❌ الجلسة انقطعت قبل النهب — أول ما تسجل دخول هيكمل عادي")
+                    } else if troopsOut {
+                        self.recLog("✅ تحقق اللعبة: قوات خرجة من القرية — النهب انطلق فعلًا")
+                        self.logActivity("✅ اتأكدت من اللعبة: النهب انطلق فعلًا (قوات خرجة)")
+                        self.sendNotification(title: "🏴 النهب انطلق", body: "البوت أطلق قايمة النهب واتأكد إن القوات خرجة")
+                    } else {
+                        self.recLog("⚠️ تحقق اللعبة: مفيش قوات خرجة — النهب ما انطلقش")
+                        self.logActivity("⚠️ مش متأكد إن النهب انطلق — دوس 🧪 وابعتلي التقرير")
+                    }
+                }
+            }
             return
         }
         let st = replaySteps[replayIdx]
@@ -713,6 +770,7 @@ class WebViewModel: NSObject, ObservableObject {
                     self.markSubmitBusy()
                     self.nextFarmAt = Date().addingTimeInterval(TimeInterval(self.farmIntervalMin * 60))
                     self.logActivity("🏴 \(msg) — الجاية بعد \(self.farmIntervalMin) دقيقة ✅")
+                    self.verifyAfterFarm(msg: msg)
                 } else {
                     self.nextFarmAt = Date().addingTimeInterval(300)
                     self.logActivity("⚠️ إعادة الضغطة المسجلة فشلت (\(msg)) — هجرب تاني بعد 5 دقايق (لو فضلت فاشلة: أعد تسجيل النهب)")
@@ -1121,6 +1179,14 @@ class WebViewModel: NSObject, ObservableObject {
                     self?.logActivity(ok ? "🏃 \(msg) — الهروب انطلق لـ (\(sx)|\(sy))" : "❌ الهروب فشل: \(msg)")
                     if ok {
                         self?.sendNotification(title: "🏃 هروب", body: "الجنود في الطريق لوجهة الهروب")
+                        // تأكيد من اللعبة: القوات خرجة فعلًا؟
+                        self?.engine.verifyOutcome { loggedOut, troopsOut, _ in
+                            DispatchQueue.main.async {
+                                if let s2 = self {
+                                    s2.logActivity(troopsOut ? "✅ اتأكدت: الهروب خارج من القرية (قوات خرجة)" : "⚠️ مش متأكد من خروج الهروب — راجع التحركات")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1457,7 +1523,24 @@ class WebViewModel: NSObject, ObservableObject {
             if saved["body", default: ""].isEmpty {
                 engine.trainViaFetch(barracksPath: barracksPath, pairs: fetchPairs, completion: handler)
             } else {
-                engine.trainReplay(saved: saved, pairs: fetchPairs, completion: handler)
+                engine.trainReplay(saved: saved, pairs: fetchPairs) { ok, msg in
+                    handler(ok, msg)
+                    if ok {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+                            guard let self = self else { return }
+                            let tUrl = self.lastTrainPost["url"] ?? ""
+                            self.engine.verifyOutcome(trainUrl: tUrl) { _, _, queued in
+                                DispatchQueue.main.async {
+                                    if queued {
+                                        self.logActivity("✅ اتأكدت: طابور التدريب ظهر في الثكنة")
+                                    } else {
+                                        self.logActivity("⚠️ التدريب انبعت بس مفيش طابور ظاهر — هجرب تاني في الدورة الجاية")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
